@@ -1,2 +1,2 @@
 # lam-bot
-# test
+# Brian "the" Lam's bot
