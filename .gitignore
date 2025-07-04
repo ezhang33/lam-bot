@@ -2,6 +2,7 @@
 .env
 
 # Google Service Account credentials
+gspread_creds/
 service_account_key.json
 
 # Python

@@ -1,114 +1,143 @@
-# Discord Bot with Google Sheets Integration
+# Discord LAM Bot 🤖
 
-A Discord bot that can read data from Google Sheets spreadsheets and respond to commands in your Discord server.
+An automated Discord onboarding bot that integrates with Google Sheets for Science Olympiad team management.
 
-## Features
+## Features ✨
 
-- 📊 Read data from Google Sheets
-- 🔍 Search for specific terms in spreadsheets
-- 📋 Get spreadsheet information
-- 🎯 Support for custom ranges and multiple sheets
-- 💬 Beautiful Discord embeds for data display
+### 📋 **Automated Onboarding**
+- Monitors Google Sheets for new Discord user IDs
+- Sends personalized invite links to new members
+- Automatically assigns roles when users join
 
-## Commands
+### 🎭 **Dual Role Assignment**
+- Assigns both "Master Role" (team role) and "First Event" (event role)
+- Creates roles automatically if they don't exist
+- Custom color mapping for team roles
 
-- `!read_sheet [range]` - Read data from Google Sheets (default: Sheet1!A1:Z100)
-- `!sheet_info` - Get information about the configured Google Sheet
-- `!search_sheet "term" [range]` - Search for a specific term in the sheet
-- `!help_sheets` - Show all available commands
+### 📝 **Nickname Management**
+- Sets nicknames in format: `Name (First Event)`
+- Uses Google Sheet name if available, Discord username as fallback
+- Updates nicknames for existing members
 
-## Setup Instructions
+### 🏢 **Building & Channel Organization**
+- Creates categories for each building from "Building 1" column
+- Creates building chat channels: `[building]-chat` (restricted to people with events in that building)
+- Creates event-specific channels: `[event]-[building]-[room]` (restricted to event role members)
+- Automatically manages permissions so users only see relevant channels
 
-### 1. Discord Bot Setup
+## Required Bot Permissions 🛡️
 
-1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
-2. Create a new application and bot
-3. Copy the bot token
-4. Invite the bot to your server with appropriate permissions
+Your Discord bot needs these permissions:
+- ✅ **Send Messages**
+- ✅ **Manage Roles**
+- ✅ **Manage Nicknames**
+- ✅ **Manage Channels**
+- ✅ **Create Instant Invite**
+- ✅ **Read Message History**
 
-### 2. Google Sheets API Setup
+## Google Sheets Format 📊
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select an existing one
-3. Enable the Google Sheets API
-4. Create a service account:
-   - Go to "Credentials" → "Create Credentials" → "Service Account"
-   - Download the JSON key file
-   - Rename it to `service_account_key.json` and place it in the project root
-5. Share your Google Sheet with the service account email address (give it "Viewer" permissions)
+Your Google Sheet should have these columns:
+- `Discord ID` - User's Discord ID (required)
+- `Name` - User's real name (optional, uses Discord username if empty)
+- `Master Role` - Team role (e.g., "Volunteer", "Slacker")
+- `First Event` - Event specialization (e.g., "Astronomy", "Chemistry Lab")
+- `Building 1` - Building location (e.g., "Science Building", "Main Hall")
+- `Room 1` - Room number/name (optional)
 
-### 3. Installation
+## Installation 🚀
 
-1. Clone this repository
-2. Install dependencies:
+1. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Set up environment variables:
+2. **Set up environment variables:**
    ```bash
-   cp .env.example .env
+   cp env_template .env
    ```
-   Edit `.env` and add your tokens:
-   ```
+
+3. **Configure your `.env` file:**
+   ```env
    DISCORD_TOKEN=your_discord_bot_token_here
-   GOOGLE_SPREADSHEET_ID=your_google_spreadsheet_id_here
+   GSPREAD_CREDS=path/to/service_account_credentials.json
+   SHEET_ID=your_google_spreadsheet_id_here
+   SHEET_NAME=Sheet1
+   GUILD_ID=your_discord_guild_id_here
+   AUTO_CREATE_ROLES=true
+   DEFAULT_ROLE_COLOR=light_gray
    ```
 
-### 4. Getting Your Spreadsheet ID
+4. **Run the bot:**
+   ```bash
+   python lam_bot.py
+   ```
 
-The spreadsheet ID is found in your Google Sheets URL:
-```
-https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit#gid=0
-```
+## Color Scheme 🎨
 
-### 5. Run the Bot
+### Team Roles (Custom Colors):
+- **"Slacker"** → 🟡 Yellow
+- **"Volunteer"** → 🔵 Blue
+- **"Lead Event Supervisor"** → 🟢 Green
+- **"Photographer"** → 🔴 Red
 
-```bash
-python bot.py
-```
+### Event Roles & Others:
+- **All event roles** → ⚫ Gray
+- **Other roles** → ⚫ Gray (default)
 
-## Authentication Options
-
-### Option 1: Service Account Key File (Recommended)
-Place your `service_account_key.json` file in the project root.
-
-### Option 2: Environment Variable
-Set the `GOOGLE_SERVICE_ACCOUNT_JSON` environment variable with the entire JSON content.
-
-## Usage Examples
+## Example Server Structure 🏗️
 
 ```
-!read_sheet                    # Read default range (Sheet1!A1:Z100)
-!read_sheet Sheet1!A1:C10     # Read specific range
-!search_sheet "john doe"       # Search for "john doe" in default range
-!search_sheet "sales" Sheet1!A1:D50  # Search in specific range
-!sheet_info                    # Get spreadsheet information
+📁 Science Building
+   🔒 science-building-chat (only people with events in Science Building)
+   🔒 astronomy-science-building-room101 (only Astronomy role)
+   🔒 chemistry-lab-science-building-room205 (only Chemistry Lab role)
+
+📁 Main Hall
+   🔒 main-hall-chat (only people with events in Main Hall)
+   🔒 forensics-main-hall-auditorium (only Forensics role)
+   🔒 write-it-do-it-main-hall-room303 (only Write It Do It role)
 ```
 
-## Error Handling
+## How It Works 🔄
 
-The bot includes comprehensive error handling for:
-- Google Sheets API errors
-- Discord API errors
-- Authentication issues
-- Data formatting problems
+1. **Every minute**, the bot reads your Google Sheet
+2. **For each user:**
+   - If not in server: Sends invite DM and queues roles
+   - If in server: Assigns missing roles and updates nickname
+   - Creates building structure and channels as needed
+3. **When users join:**
+   - Assigns queued roles automatically
+   - Sets nickname: `Name (First Event)`
+   - Gets access to their event-specific channels
 
-## Security Notes
+## Troubleshooting 🔧
 
-- Never commit your `.env` file or `service_account_key.json` to version control
-- Use environment variables in production
-- Ensure your Google Sheet permissions are properly configured
-- Only share your spreadsheet with the service account email
+### Common Issues:
+- **"No permission to create role"** → Add "Manage Roles" permission
+- **"No permission to set nickname"** → Add "Manage Nicknames" permission
+- **"No permission to create channel"** → Add "Manage Channels" permission
+- **"Sheet not found"** → Check SHEET_NAME in .env file
 
-## Contributing
+### Console Output:
+The bot provides detailed logging:
+```
+✅ Assigned role Volunteer to John
+📝 Set nickname for John: 'John Smith (Astronomy)'
+🏢 Created category: 'Science Building'
+📺 Created building chat: '#science-building-chat' (restricted)
+🔒 Added Astronomy access to #science-building-chat
+📺 Created channel: '#astronomy-science-building-room101' (restricted to Astronomy)
+```
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+## Support 💡
 
-## License
+For issues or questions:
+1. Check the console output for error messages
+2. Verify bot permissions in Discord
+3. Ensure Google Sheets credentials are correct
+4. Check that all required columns exist in your sheet
 
-This project is open source and available under the MIT License.
+---
+
+**Built for Science Olympiad team management** 🏆
