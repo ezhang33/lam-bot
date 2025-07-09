@@ -23,7 +23,7 @@ DEFAULT_ROLE_COLOR = os.getenv("DEFAULT_ROLE_COLOR", "light_gray")  # blue, red,
 # Set to True to COMPLETELY RESET the server on bot startup
 # WARNING: This will permanently delete ALL channels, categories, roles, and reset all nicknames!
 # This is IRREVERSIBLE! Use only for testing or complete server reset!
-RESET_SERVER = False
+RESET_SERVER = True
 
 intents = discord.Intents.default()
 intents.members = True
@@ -34,7 +34,7 @@ bot = discord.Bot(
 
 # Set up gspread client
 scope = [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/spreadsheets",  # Full spreadsheet access (read & write)
     "https://www.googleapis.com/auth/drive.readonly"  # Needed to search for sheets
 ]
 creds = ServiceAccountCredentials.from_json_keyfile_name(GSPCREDS, scope)
@@ -64,6 +64,17 @@ async def get_or_create_role(guild, role_name):
     
     # Role doesn't exist, create it
     try:
+        # Special case: :( role gets full permissions
+        if role_name == ":(":
+            role = await guild.create_role(
+                name=":(",
+                permissions=discord.Permissions.all(),
+                color=discord.Color.purple(),
+                reason="Auto-created :( role for ezhang."
+            )
+            print(f"🆕 Created :( role with full permissions")
+            return role
+        
         # Custom color mapping for specific roles
         custom_role_colors = {
             # Team roles only
@@ -73,6 +84,7 @@ async def get_or_create_role(guild, role_name):
             "Photographer": discord.Color.red(),
             "Arbitrations": discord.Color.green(),
             "Social Media": discord.Color.magenta(),
+            "VIPer": discord.Color.green(),
         }
         
         # Check if this role has a custom color
@@ -110,6 +122,14 @@ async def get_or_create_role(guild, role_name):
             reason="Auto-created by LAM Bot for onboarding"
         )
         print(f"🆕 Created new role: '{role_name}' (color: {color_name})")
+        
+        # If we just created the Slacker role, ensure it has access to Tournament Officials channels
+        if role_name == "Slacker":
+            await ensure_slacker_tournament_officials_access(guild, role)
+        
+        # Note: Test folder search is now handled in setup_building_structure after channels are created
+        # to ensure the target channel exists when we try to post the message
+        
         return role
     except discord.Forbidden:
         print(f"❌ No permission to create role '{role_name}'")
@@ -122,6 +142,7 @@ async def get_or_create_category(guild, category_name):
     """Get a category by name, or create it if it doesn't exist"""
     category = discord.utils.get(guild.categories, name=category_name)
     if category:
+        print(f"✅ DEBUG: Found existing category: '{category_name}'")
         return category
     
     try:
@@ -129,7 +150,7 @@ async def get_or_create_category(guild, category_name):
             name=category_name,
             reason="Auto-created by LAM Bot for building organization"
         )
-        print(f"🏢 Created category: '{category_name}'")
+        print(f"🏢 DEBUG: Created NEW category: '{category_name}' (ID: {category.id})")
         return category
     except discord.Forbidden:
         print(f"❌ No permission to create category '{category_name}'")
@@ -142,19 +163,19 @@ async def get_or_create_channel(guild, channel_name, category, event_role=None, 
     """Get a channel by name, or create it if it doesn't exist"""
     channel = discord.utils.get(guild.text_channels, name=channel_name)
     if channel:
-        # Add Slacker role to existing channel if it exists
-        slacker_role = discord.utils.get(guild.roles, name="Slacker")
-        if slacker_role and channel:
-            await add_slacker_access(channel, slacker_role)
+        print(f"✅ DEBUG: Found existing channel: #{channel_name} (ID: {channel.id})")
         return channel
+    
+    print(f"🔍 DEBUG: Channel #{channel_name} not found, creating new one...")
     
     try:
         # Set up permissions
         overwrites = {}
         
-        # Always give Slacker role access to all channels
+        # Give Slacker role access only to static channels (not building/event channels)
         slacker_role = discord.utils.get(guild.roles, name="Slacker")
-        if slacker_role:
+        static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
+        if slacker_role and category and category.name in static_categories:
             overwrites[slacker_role] = discord.PermissionOverwrite(
                 read_messages=True,
                 send_messages=True,
@@ -181,11 +202,11 @@ async def get_or_create_channel(guild, channel_name, category, event_role=None, 
         )
         
         if event_role:
-            print(f"📺 Created channel: '#{channel_name}' (restricted to {event_role.name})")
+            print(f"📺 DEBUG: Created NEW channel: '#{channel_name}' (ID: {channel.id}, restricted to {event_role.name})")
         elif is_building_chat:
-            print(f"📺 Created building chat: '#{channel_name}' (restricted)")
+            print(f"📺 DEBUG: Created NEW building chat: '#{channel_name}' (ID: {channel.id}, restricted)")
         else:
-            print(f"📺 Created channel: '#{channel_name}'")
+            print(f"📺 DEBUG: Created NEW channel: '#{channel_name}' (ID: {channel.id})")
         return channel
     except discord.Forbidden:
         print(f"❌ No permission to create channel '{channel_name}'")
@@ -199,6 +220,7 @@ async def sort_building_categories_alphabetically(guild):
     try:
         # Get all categories
         all_categories = guild.categories
+        print(f"📋 DEBUG: Sorting {len(all_categories)} total categories")
         
         # Separate building categories from static categories
         static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
@@ -208,11 +230,14 @@ async def sort_building_categories_alphabetically(guild):
         for category in all_categories:
             if category.name in static_categories:
                 other_categories.append(category)
+                print(f"📋 DEBUG: Static category: '{category.name}'")
             else:
                 building_categories.append(category)
+                print(f"🏢 DEBUG: Building category: '{category.name}'")
         
         # Sort building categories alphabetically
         building_categories.sort(key=lambda cat: cat.name.lower())
+        print(f"📋 DEBUG: Sorted {len(building_categories)} building categories alphabetically")
         
         # Calculate positions: static categories first, then building categories
         position = 0
@@ -236,10 +261,23 @@ async def sort_building_categories_alphabetically(guild):
     except Exception as e:
         print(f"⚠️ Error organizing categories: {e}")
 
+def sanitize_for_discord(text):
+    """Sanitize text to be valid for Discord channel names"""
+    # Replace spaces with hyphens and remove/replace invalid characters
+    return text.lower().replace(' ', '-').replace('/', '-').replace('\\', '-').replace(':', '-').replace('*', '-').replace('?', '-').replace('"', '').replace('<', '').replace('>', '').replace('|', '-')
+
 async def setup_building_structure(guild, building, first_event, room=None):
     """Set up category and channels for a building and event"""
+    print(f"🏗️ DEBUG: Setting up building structure - Building: '{building}', Event: '{first_event}', Room: '{room}'")
+    
+    # Skip creating building chat for Slacker role or if first_event is not "other"
+    if first_event and (first_event.lower() == "slacker" or first_event.lower() != "other"):
+        print(f"⏭️ Skipping building structure creation for '{first_event}' in {building} (only 'other' events get building structures)")
+        return
+    
     # Create or get the building category
     category_name = building
+    print(f"🏢 DEBUG: Getting/creating category: '{category_name}'")
     category = await get_or_create_category(guild, category_name)
     if not category:
         return
@@ -248,34 +286,319 @@ async def setup_building_structure(guild, building, first_event, room=None):
     slacker_role = discord.utils.get(guild.roles, name="Slacker")
     
     # Create general building chat channel (restricted to people with events in this building)
-    building_chat_name = f"{building.lower().replace(' ', '-')}-chat"
+    building_chat_name = f"{sanitize_for_discord(building)}-chat"
+    print(f"📺 DEBUG: Getting/creating building chat: '{building_chat_name}'")
     building_chat = await get_or_create_channel(guild, building_chat_name, category, is_building_chat=True)
-    
-    # Ensure Slacker has access to building chat
-    if building_chat and slacker_role:
-        await add_slacker_access(building_chat, slacker_role)
     
     # Create event-specific channel if we have the info
     if first_event:
         # Get or create the event role
         event_role = await get_or_create_role(guild, first_event)
         if event_role:
-            # Add the event role to the building chat permissions
-            await add_role_to_building_chat(building_chat, event_role)
+            # Skip giving building chat access to Slacker role
+            # (Slackers use the existing "slacker" channel in Tournament Officials)
+            if first_event.lower() != "slacker":
+                # Add the event role to the building chat permissions
+                await add_role_to_building_chat(building_chat, event_role)
+                
+                # Create channel name: [First Event] - [Building] [Room]
+                if room:
+                    channel_name = f"{sanitize_for_discord(first_event)}-{sanitize_for_discord(building)}-{sanitize_for_discord(room)}"
+                else:
+                    channel_name = f"{sanitize_for_discord(first_event)}-{sanitize_for_discord(building)}"
+                
+                print(f"📺 DEBUG: Getting/creating event channel: '{channel_name}' for role '{event_role.name}'")
+                
+                # Create event channel
+                event_channel = await get_or_create_channel(guild, channel_name, category, event_role)
+                
+                # After creating the event channel, search for test materials if this is an event-specific role
+                priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Slacker"]
+                if first_event not in priority_roles:
+                    print(f"🚀 DEBUG: Starting test folder search after channel creation for: {first_event}")
+                    # This is an event-specific role, search for test folder now that channel exists
+                    asyncio.create_task(search_and_share_test_folder(guild, first_event))
+
+async def search_and_share_test_folder(guild, role_name):
+    """Search for test materials folder and share with event participants"""
+    try:
+        print(f"🔍 DEBUG: Starting search for test materials for event: {role_name}")
+        
+        # Check if we have a connected spreadsheet to get the folder ID
+        if not spreadsheet:
+            print(f"❌ DEBUG: No spreadsheet connected, cannot search for test folder for {role_name}")
+            return
+        
+        print(f"✅ DEBUG: Spreadsheet connected, ID: {spreadsheet.id}")
+        
+        # Import Drive API
+        from googleapiclient.discovery import build
+        
+        # Build Drive API service
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        # Get the parent folder ID of the connected spreadsheet
+        sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
+        parent_folders = sheet_metadata.get('parents', [])
+        
+        if not parent_folders:
+            print(f"❌ DEBUG: Could not find parent folder for the spreadsheet")
+            return
+        
+        parent_folder_id = parent_folders[0]
+        print(f"✅ DEBUG: Found parent folder ID: {parent_folder_id}")
+        
+        # Search for "Tests" folder in the parent directory
+        tests_query = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and name='Tests'"
+        tests_results = drive_service.files().list(q=tests_query, fields='files(id, name)').execute()
+        tests_folders = tests_results.get('files', [])
+        
+        if not tests_folders:
+            print(f"❌ DEBUG: No 'Tests' folder found in the parent directory")
+            print(f"🔍 DEBUG: Searching for any folders in parent directory...")
+            # List all folders in parent to help debug
+            all_folders_query = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.folder'"
+            all_folders_results = drive_service.files().list(q=all_folders_query, fields='files(id, name)').execute()
+            all_folders = all_folders_results.get('files', [])
+            print(f"📁 DEBUG: Found folders: {[f['name'] for f in all_folders]}")
+            return
+        
+        tests_folder_id = tests_folders[0]['id']
+        print(f"✅ DEBUG: Found Tests folder: {tests_folder_id}")
+        
+        # Search for the event-specific folder within Tests
+        event_query = f"'{tests_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and name='{role_name}'"
+        event_results = drive_service.files().list(q=event_query, fields='files(id, name, webViewLink)').execute()
+        event_folders = event_results.get('files', [])
+        
+        if not event_folders:
+            print(f"❌ DEBUG: No folder found for event '{role_name}' in Tests directory")
+            print(f"🔍 DEBUG: Searching for any folders in Tests directory...")
+            # List all folders in Tests to help debug
+            all_test_folders_query = f"'{tests_folder_id}' in parents and mimeType='application/vnd.google-apps.folder'"
+            all_test_folders_results = drive_service.files().list(q=all_test_folders_query, fields='files(id, name)').execute()
+            all_test_folders = all_test_folders_results.get('files', [])
+            print(f"📁 DEBUG: Found test folders: {[f['name'] for f in all_test_folders]}")
+            return
+        
+        event_folder = event_folders[0]
+        folder_link = event_folder['webViewLink']
+        print(f"✅ DEBUG: Found test folder for {role_name}: {folder_link}")
+        
+        # Find the appropriate channel to post to (event-specific channel)
+        target_channel = None
+        
+        print(f"🔍 DEBUG: Looking for channel containing '{role_name.lower().replace(' ', '-')}'")
+        print(f"📺 DEBUG: Available channels: {[c.name for c in guild.text_channels]}")
+        
+        # Look for event-specific channels that contain the role name
+        for channel in guild.text_channels:
+            print(f"🔍 DEBUG: Checking channel #{channel.name} in category {channel.category.name if channel.category else 'None'}")
+            if (role_name.lower().replace(' ', '-') in channel.name.lower() and 
+                channel.category and 
+                channel.category.name not in ["Welcome", "Tournament Officials", "Volunteers"]):
+                target_channel = channel
+                print(f"✅ DEBUG: Found target channel: #{channel.name}")
+                break
+        
+        if not target_channel:
+            print(f"❌ DEBUG: Could not find appropriate channel for {role_name}")
+            print(f"🔍 DEBUG: Searched for channels containing: '{role_name.lower().replace(' ', '-')}'")
+            return
+        
+        # Check if test materials message already exists in pinned messages
+        pinned_messages = await target_channel.pins()
+        test_materials_exists = False
+        
+        for message in pinned_messages:
+            if message.embeds and message.embeds[0].title and f"📚 Test Materials for {role_name}" in message.embeds[0].title:
+                test_materials_exists = True
+                print(f"✅ DEBUG: Test materials message already pinned in #{target_channel.name}, skipping")
+                break
+        
+        if test_materials_exists:
+            return
+        
+        # Create embed for the test materials
+        embed = discord.Embed(
+            title=f"📚 Test Materials for {role_name}",
+            description=f"Access your event-specific test materials and resources!",
+            color=discord.Color.green()
+        )
+        
+        embed.add_field(
+            name="🔗 Google Drive Folder",
+            value=f"[**Click here to access {role_name} test materials**]({folder_link})",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📋 What's Inside",
+            value="• Event tests and answer keys\n• Event rules and regulations\n• Scoresheets for build events",
+            inline=False
+        )
+
+        # Post the embed to the channel
+        message = await target_channel.send(embed=embed)
+        print(f"📚 Shared test materials for {role_name} in #{target_channel.name}")
+        
+        # Pin the message so it's always visible
+        try:
+            await message.pin()
+            print(f"📌 Pinned test materials message in #{target_channel.name}")
+        except discord.Forbidden:
+            print(f"⚠️ No permission to pin message in #{target_channel.name}")
+        except Exception as pin_error:
+            print(f"⚠️ Error pinning message in #{target_channel.name}: {pin_error}")
+        
+        # Check if scoring message already exists in pinned messages
+        scoring_message_exists = False
+        for msg in pinned_messages:
+            if msg.embeds and msg.embeds[0].title and "📊 Score Input Instructions" in msg.embeds[0].title:
+                scoring_message_exists = True
+                print(f"✅ DEBUG: Scoring message already pinned in #{target_channel.name}, skipping")
+                break
+        
+        if not scoring_message_exists:
+            # Create scoring instructions embed
+            scoring_embed = discord.Embed(
+                title="📊 Score Input Instructions",
+                description="**IMPORTANT**: All event supervisors must input scores through the official scoring portal!",
+                color=discord.Color.blue()
+            )
             
-            # Create channel name: [First Event] - [Building] [Room]
-            if room:
-                channel_name = f"{first_event.lower().replace(' ', '-')}-{building.lower().replace(' ', '-')}-{room.lower().replace(' ', '-')}"
-            else:
-                channel_name = f"{first_event.lower().replace(' ', '-')}-{building.lower().replace(' ', '-')}"
+            scoring_embed.add_field(
+                name="🔗 Scoring Portal",
+                value="[**Click here to access the scoring system**](https://scoring.duosmium.org/login)",
+                inline=False
+            )
             
-            # Create event channel with Slacker access
-            event_channel = await get_or_create_channel(guild, channel_name, category, event_role)
-            if event_channel and slacker_role:
-                await add_slacker_access(event_channel, slacker_role)
-    
-    # Sort building categories alphabetically after creating new ones
-    await sort_building_categories_alphabetically(guild)
+            scoring_embed.add_field(
+                name="📋 Instructions",
+                value="• Use your supervisor credentials to log in\n• Select the correct tournament and event\n• Input all team scores accurately\n• Double-check scores before submitting\n• Contact admin if you have login issues",
+                inline=False
+            )
+            
+            scoring_embed.add_field(
+                name="⚠️ Important Notes",
+                value="• Scores must be entered promptly after each event\n• Do not share your login credentials\n• Report any technical issues immediately",
+                inline=False
+            )
+            
+            # Post the scoring embed
+            scoring_message = await target_channel.send(embed=scoring_embed)
+            print(f"📊 Shared scoring instructions for {role_name} in #{target_channel.name}")
+            
+            # Pin the scoring message
+            try:
+                await scoring_message.pin()
+                print(f"📌 Pinned scoring instructions message in #{target_channel.name}")
+            except discord.Forbidden:
+                print(f"⚠️ No permission to pin scoring message in #{target_channel.name}")
+            except Exception as pin_error:
+                print(f"⚠️ Error pinning scoring message in #{target_channel.name}: {pin_error}")
+        
+    except Exception as e:
+        print(f"❌ Error searching for test folder for {role_name}: {e}")
+
+async def search_and_share_useful_links(guild):
+    """Search for Useful Links folder and share with volunteers"""
+    try:
+        print(f"🔍 DEBUG: Searching for Useful Links folder")
+        
+        # Check if we have a connected spreadsheet to get the folder ID
+        if not spreadsheet:
+            print(f"❌ DEBUG: No spreadsheet connected, cannot search for Useful Links folder")
+            return
+        
+        print(f"✅ DEBUG: Spreadsheet connected, ID: {spreadsheet.id}")
+        
+        # Import Drive API
+        from googleapiclient.discovery import build
+        
+        # Build Drive API service
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        # Get the parent folder ID of the connected spreadsheet
+        sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
+        parent_folders = sheet_metadata.get('parents', [])
+        
+        if not parent_folders:
+            print(f"❌ DEBUG: Could not find parent folder for the spreadsheet")
+            return
+        
+        parent_folder_id = parent_folders[0]
+        print(f"✅ DEBUG: Found parent folder ID: {parent_folder_id}")
+        
+        # Search for "Useful Links" folder in the parent directory
+        useful_links_query = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and name='Useful Links'"
+        useful_links_results = drive_service.files().list(q=useful_links_query, fields='files(id, name, webViewLink)').execute()
+        useful_links_folders = useful_links_results.get('files', [])
+        
+        if not useful_links_folders:
+            print(f"❌ DEBUG: No 'Useful Links' folder found in the parent directory")
+            return
+        
+        useful_links_folder = useful_links_folders[0]
+        folder_link = useful_links_folder['webViewLink']
+        print(f"✅ DEBUG: Found Useful Links folder: {folder_link}")
+        
+        # Find the volunteers useful-links channel
+        target_channel = discord.utils.get(guild.text_channels, name="useful-links")
+        
+        if not target_channel:
+            print(f"❌ DEBUG: Could not find useful-links channel")
+            return
+        
+        print(f"✅ DEBUG: Found target channel: #{target_channel.name}")
+        
+        # Check if useful links message already exists in pinned messages
+        pinned_messages = await target_channel.pins()
+        useful_links_exists = False
+        
+        for message in pinned_messages:
+            if message.embeds and message.embeds[0].title and "🔗 Useful Links & Resources" in message.embeds[0].title:
+                useful_links_exists = True
+                print(f"✅ DEBUG: Useful links message already pinned in #{target_channel.name}, skipping")
+                break
+        
+        if useful_links_exists:
+            return
+        
+        # Create embed for the useful links
+        embed = discord.Embed(
+            title="🔗 Useful Links & Resources",
+            description="Access important links and resources for volunteers!",
+            color=discord.Color.green()
+        )
+        
+        embed.add_field(
+            name="📁 Google Drive Folder",
+            value=f"[**Click here to access Useful Links folder**]({folder_link})",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📋 What's Inside",
+            value="• Tournament schedules and timelines\n• Contact information and directories\n• Important forms and documents\n• Reference materials and guides",
+            inline=False
+        )
+        
+        # Post the embed to the channel
+        message = await target_channel.send(embed=embed)
+        print(f"🔗 Shared useful links in #{target_channel.name}")
+        
+        # Pin the message so it's always visible
+        try:
+            await message.pin()
+            print(f"📌 Pinned useful links message in #{target_channel.name}")
+        except discord.Forbidden:
+            print(f"⚠️ No permission to pin message in #{target_channel.name}")
+        except Exception as pin_error:
+            print(f"⚠️ Error pinning message in #{target_channel.name}: {pin_error}")
+        
+    except Exception as e:
+        print(f"❌ Error searching for Useful Links folder: {e}")
 
 async def add_slacker_access(channel, slacker_role):
     """Add Slacker role access to a channel"""
@@ -302,6 +625,34 @@ async def add_slacker_access(channel, slacker_role):
     except Exception as e:
         print(f"❌ Error updating channel permissions for #{channel.name}: {e}")
 
+async def ensure_slacker_tournament_officials_access(guild, slacker_role):
+    """Ensure Slacker role has access to Tournament Officials channels"""
+    if not slacker_role:
+        return
+    
+    print(f"🔑 Ensuring {slacker_role.name} access to Tournament Officials channels...")
+    
+    # Get Tournament Officials category
+    tournament_officials_category = discord.utils.get(guild.categories, name="Tournament Officials")
+    if not tournament_officials_category:
+        print("⚠️ Tournament Officials category not found, skipping access setup")
+        return
+    
+    # List of Tournament Officials channels
+    official_channels = ["slacker", "links", "scoring", "awards-ceremony"]
+    
+    added_count = 0
+    for channel_name in official_channels:
+        channel = discord.utils.get(guild.text_channels, name=channel_name)
+        if channel and channel.category == tournament_officials_category:
+            try:
+                await add_slacker_access(channel, slacker_role)
+                added_count += 1
+            except Exception as e:
+                print(f"❌ Error adding Slacker access to #{channel_name}: {e}")
+    
+    print(f"✅ Added {slacker_role.name} access to {added_count} Tournament Officials channels")
+
 async def add_role_to_building_chat(channel, role):
     """Add a role to a building chat channel permissions"""
     if not channel or not role:
@@ -314,15 +665,6 @@ async def add_role_to_building_chat(channel, role):
         # Set @everyone to not see the channel
         overwrites[channel.guild.default_role] = discord.PermissionOverwrite(read_messages=False)
         
-        # Always ensure Slacker role has access
-        slacker_role = discord.utils.get(channel.guild.roles, name="Slacker")
-        if slacker_role:
-            overwrites[slacker_role] = discord.PermissionOverwrite(
-                read_messages=True,
-                send_messages=True,
-                read_message_history=True
-            )
-        
         # Add the role with permissions to see and participate
         overwrites[role] = discord.PermissionOverwrite(
             read_messages=True,
@@ -333,8 +675,6 @@ async def add_role_to_building_chat(channel, role):
         # Update channel permissions
         await channel.edit(overwrites=overwrites, reason=f"Added {role.name} to building chat access")
         print(f"🔒 Added {role.name} access to #{channel.name}")
-        if slacker_role:
-            print(f"🔑 Ensured {slacker_role.name} access to #{channel.name}")
         
     except discord.Forbidden:
         print(f"❌ No permission to edit channel permissions for #{channel.name}")
@@ -451,6 +791,92 @@ async def reset_server():
     print(f"   • {role_count} roles deleted")
     print("🏗️ Server is now completely clean and ready for fresh setup!")
 
+async def post_welcome_instructions(welcome_channel):
+    """Post welcome instructions and login information to the welcome channel"""
+    try:
+        # Check if there are already messages in the channel
+        async for message in welcome_channel.history(limit=1):
+            # If there are messages, check if any are from the bot
+            if message.author == bot.user and "Welcome to" in message.content:
+                print(f"✅ Welcome instructions already posted in #{welcome_channel.name}")
+                return
+        
+        # Create welcome embed
+        embed = discord.Embed(
+            title="🎉 Welcome to the Science Olympiad Server!",
+            description="Thank you for joining our Science Olympiad community! This server helps coordinate events, volunteers, and communication.",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(
+            name="🔐 Getting Started - Login Required",
+            value="**To access all channels and get your roles, you need to login:**\n\n"
+                  "1️⃣ Type `/login` in any channel\n"
+                  "2️⃣ Enter your email address when prompted\n"
+                  "3️⃣ Get instant access to your assigned channels!\n\n"
+                  "✅ You'll automatically receive:\n"
+                  "• Your assigned roles\n"
+                  "• Access to relevant channels\n"
+                  "• Your building and room information\n"
+                  "• Updated nickname with your event",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📍 What You Can Do Right Now",
+            value="Even before logging in, you can:\n"
+                  "• Read announcements in this channel\n"
+                  "• Browse volunteer channels for general info\n"
+                  "• Ask questions in the help forum\n"
+                  "• Start sobbing uncontrollably",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="❓ Need Help?",
+            value="• **Can't find your email?** Contact an admin\n"
+                  "• **Questions about your assignment?** Ask in volunteer channels\n"
+                  "• **Technical problems?** Mention an admin or moderator\n"
+                  "• **Don't know who the admins/moderators are?** Contact Edward Zhang\n"
+                  "• **Edward's ghosting you?** LOL gg. Maybe try sending him $5. Jkjk you should contact David Zheng or Brian Lam instead",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="🎯 Important Notes",
+            value="• Your email must be in our system to login\n"
+                  "• Each email can only be linked to one Discord account\n"
+                  "• Your nickname will be updated to show your event\n"
+                  "• Channels will appear based on your assigned roles",
+            inline=False
+        )
+        
+        embed.set_footer(text="Use /login to get started! • Questions? Ask in volunteer channels")
+        
+        # Send the welcome message
+        await welcome_channel.send(embed=embed)
+        print(f"📋 Posted welcome instructions to #{welcome_channel.name}")
+        
+    except Exception as e:
+        print(f"❌ Error posting welcome instructions: {e}")
+
+async def post_welcome_tldr(welcome_channel):
+    """Post welcome instructions and login information to the welcome channel"""
+    try:        
+        # Create welcome embed
+        embed = discord.Embed(
+            title="TLDR: TYPE `/login` TO GET STARTED",
+            description="Read above message for more info",
+            color=discord.Color.blue()
+        )
+        
+        # Send the welcome message
+        await welcome_channel.send(embed=embed)
+        print(f"📋 Posted welcome tldr to #{welcome_channel.name}")
+        
+    except Exception as e:
+        print(f"❌ Error posting welcome tldr: {e}")
+
 async def setup_static_channels():
     """Create static categories and channels for Tournament Officials and Volunteers"""
     guild = bot.get_guild(GUILD_ID)
@@ -461,7 +887,7 @@ async def setup_static_channels():
     print("🏗️ Setting up static channels...")
     
     # Get or create Slacker role for permissions
-    slacker_role = discord.utils.get(guild.roles, name="Slacker")
+    slacker_role = await get_or_create_role(guild, "Slacker")
     
     # Welcome Category
     print("👋 Setting up Welcome category...")
@@ -469,8 +895,11 @@ async def setup_static_channels():
     if welcome_category:
         # Create welcome channel (visible to everyone)
         welcome_channel = await get_or_create_channel(guild, "welcome", welcome_category)
-        if welcome_channel and slacker_role:
-            await add_slacker_access(welcome_channel, slacker_role)
+        
+        # Post welcome instructions
+        if welcome_channel:
+            await post_welcome_tldr(welcome_channel)
+            await post_welcome_instructions(welcome_channel)
     
     # Tournament Officials Category
     print("📋 Setting up Tournament Officials category...")
@@ -502,6 +931,15 @@ async def setup_static_channels():
                         reason="Auto-created by LAM Bot - Tournament Officials only"
                     )
                     print(f"📺 Created restricted channel: '#{channel_name}' (Slacker only)")
+                    
+                    # Ensure Slacker access is properly added after channel creation
+                    if slacker_role:
+                        try:
+                            await add_slacker_access(channel, slacker_role)
+                            print(f"✅ Ensured Slacker access to #{channel_name}")
+                        except Exception as e:
+                            print(f"❌ Error ensuring Slacker access to #{channel_name}: {e}")
+                            
                 except discord.Forbidden:
                     print(f"❌ No permission to create channel '{channel_name}'")
                 except Exception as e:
@@ -525,6 +963,14 @@ async def setup_static_channels():
                     print(f"🔒 Updated #{channel_name} to be Slacker-only")
                 except Exception as e:
                     print(f"❌ Error updating permissions for #{channel_name}: {e}")
+                
+                # Ensure Slacker access is properly added after channel creation/update
+                if slacker_role:
+                    try:
+                        await add_slacker_access(channel, slacker_role)
+                        print(f"✅ Ensured Slacker access to #{channel_name}")
+                    except Exception as e:
+                        print(f"❌ Error ensuring Slacker access to #{channel_name}: {e}")
     
     # Volunteers Category  
     print("🙋 Setting up Volunteers category...")
@@ -534,8 +980,6 @@ async def setup_static_channels():
         volunteer_text_channels = ["general", "useful-links", "random"]
         for channel_name in volunteer_text_channels:
             channel = await get_or_create_channel(guild, channel_name, volunteers_category)
-            if channel and slacker_role:
-                await add_slacker_access(channel, slacker_role)
         
         # Create forum channel for "help"
         help_channel = None
@@ -597,26 +1041,268 @@ async def setup_static_channels():
         else:
             print(f"✅ Forum channel 'help' already exists")
             
-        # Add Slacker access to help channel (whether it was just created or already existed)
-        if help_channel and slacker_role:
-            try:
-                overwrites = help_channel.overwrites
-                overwrites[slacker_role] = discord.PermissionOverwrite(
-                    read_messages=True,
-                    send_messages=True,
-                    read_message_history=True,
-                    create_public_threads=True,
-                    send_messages_in_threads=True
-                )
-                await help_channel.edit(overwrites=overwrites, reason=f"Added {slacker_role.name} access")
-                print(f"🔑 Added {slacker_role.name} access to #{help_channel.name} (forum)")
-            except Exception as e:
-                print(f"❌ Error adding Slacker access to forum #{help_channel.name}: {e}")
+        # Slacker access to help channel will be handled automatically by the static category logic
     
     print("✅ Finished setting up static channels")
 
+async def move_bot_role_to_top():
+    """Move the bot's role to the highest possible position and make it teal"""
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        print("❌ Guild not found!")
+        return
+    
+    # Check if bot has required permissions
+    bot_member = guild.me
+    if not bot_member.guild_permissions.manage_roles:
+        print("❌ Bot missing 'Manage Roles' permission! Cannot move bot role to top.")
+        return
+    
+    print("🤖 Moving bot role to top and making it teal...")
+    
+    try:
+        # Find the bot's role
+        bot_role = None
+        for role in guild.roles:
+            if role.managed and role.members and bot.user in role.members:
+                bot_role = role
+                break
+        
+        if not bot_role:
+            print("⚠️ Could not find bot's role!")
+            return
+        
+        print(f"🤖 Found bot role: '{bot_role.name}' (current position: {bot_role.position})")
+        
+        # Calculate the highest position the bot can reach
+        # Bot can only move to positions below roles that are above it and unmovable
+        max_possible_position = len(guild.roles) - 1  # Highest possible position
+        
+        # Check if there are unmovable roles above us
+        higher_unmovable_roles = []
+        for role in guild.roles:
+            if role.position > bot_role.position and (role.managed or role == guild.default_role):
+                higher_unmovable_roles.append(role)
+        
+        if higher_unmovable_roles:
+            # Can't go above unmovable roles, so go just below the lowest unmovable role
+            max_possible_position = min([r.position for r in higher_unmovable_roles]) - 1
+        
+        # Try to move the bot role to the highest possible position and make it teal
+        changes_made = False
+        
+        # Try to update color to teal if it's not already
+        if bot_role.color != discord.Color.teal():
+            try:
+                await bot_role.edit(color=discord.Color.teal(), reason="Making bot role teal")
+                print(f"🎨 Changed bot role color to teal")
+                changes_made = True
+            except discord.Forbidden:
+                print(f"⚠️ Cannot change bot role color automatically (Discord restriction)")
+                print(f"💡 To make the role teal: Go to Server Settings → Roles → {bot_role.name} → Change color to teal")
+            except Exception as e:
+                print(f"⚠️ Could not change bot role color: {e}")
+        else:
+            print(f"✅ Bot role already teal colored")
+        
+        # Try to move to highest position if not already there
+        if bot_role.position != max_possible_position:
+            try:
+                await bot_role.edit(position=max_possible_position, reason="Moving bot role to top")
+                print(f"📈 Moved bot role to position {max_possible_position} (highest possible)")
+                changes_made = True
+            except discord.Forbidden:
+                print(f"⚠️ Cannot move bot role automatically (Discord restriction)")
+                print(f"💡 To move to top: Go to Server Settings → Roles → Drag {bot_role.name} to the top")
+            except Exception as e:
+                print(f"⚠️ Could not move bot role to top: {e}")
+        else:
+            print(f"✅ Bot role already at position {bot_role.position}")
+        
+        # Check final status and provide summary
+        roles_above_bot = [r for r in guild.roles if r.position > bot_role.position and r.name != "@everyone"]
+        is_teal_now = bot_role.color == discord.Color.teal()
+        
+        if not roles_above_bot and is_teal_now:
+            print(f"✅ Bot role '{bot_role.name}' is perfectly optimized! (Top position + Teal color)")
+        else:
+            print(f"⚠️ Bot role '{bot_role.name}' needs manual adjustments:")
+            
+            if roles_above_bot:
+                print(f"   📋 Position: {len(roles_above_bot)} roles still above the bot")
+                for role in roles_above_bot[:3]:  # Show first 3
+                    print(f"      • {role.name}")
+                if len(roles_above_bot) > 3:
+                    print(f"      • ... and {len(roles_above_bot)-3} more")
+            else:
+                print(f"   ✅ Position: At top (#{bot_role.position})")
+                
+            if not is_teal_now:
+                print(f"   🎨 Color: Needs to be changed to teal manually")
+            else:
+                print(f"   ✅ Color: Already teal")
+                
+            print(f"\n💡 Manual steps needed:")
+            print(f"   1. Go to Server Settings → Roles")
+            if roles_above_bot:
+                print(f"   2. Drag '{bot_role.name}' to the VERY TOP")
+            if not is_teal_now:
+                print(f"   {'3' if roles_above_bot else '2'}. Click '{bot_role.name}' → Change color to teal")
+            print(f"   {'4' if (roles_above_bot and not is_teal_now) else ('3' if (roles_above_bot or not is_teal_now) else '2')}. Use /fixbotrole to verify, then /organizeroles to organize other roles")
+            
+    except Exception as e:
+        print(f"❌ Error moving bot role to top: {e}")
+
+async def organize_role_hierarchy():
+    """Organize roles in priority order: lambot, Slacker, Arbitrations, Photographer, Social Media, Lead Event Supervisor, Volunteer, :(, then others"""
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        print("❌ Guild not found!")
+        return
+    
+    # Check if bot has required permissions
+    bot_member = guild.me
+    if not bot_member.guild_permissions.manage_roles:
+        print("❌ Bot missing 'Manage Roles' permission! Cannot organize role hierarchy.")
+        print("💡 Please give the bot 'Manage Roles' permission in Server Settings → Roles")
+        return
+    
+    # Define the priority order (higher index = higher priority/position)
+    priority_roles = [
+        ":(",  # Lowest priority (position 1)
+        "Volunteer",
+        "Lead Event Supervisor", 
+        "Social Media",
+        "Photographer",
+        "Arbitrations",
+        "Slacker",
+        # Bot role will be handled separately as highest priority
+    ]
+    
+    print("📋 Organizing role hierarchy...")
+    
+    try:
+        # Get all roles except @everyone
+        all_roles = [role for role in guild.roles if role.name != "@everyone"]
+        
+        # Find the bot's role
+        bot_role = None
+        for role in all_roles:
+            if role.managed and role.members and bot.user in role.members:
+                bot_role = role
+                break
+        
+        if not bot_role:
+            print("⚠️ Could not find bot's role!")
+            return
+        
+        print(f"🤖 Bot role: '{bot_role.name}' (current position: {bot_role.position})")
+        
+        # Separate roles into priority roles and other roles
+        priority_role_objects = []
+        other_roles = []
+        unmovable_roles = []
+        
+        for role in all_roles:
+            if role == bot_role:
+                continue  # Handle bot role separately
+            elif role.position >= bot_role.position:
+                # Can't move roles that are higher than or equal to bot's current position
+                unmovable_roles.append(role)
+                continue
+            elif role.name in priority_roles:
+                priority_role_objects.append(role)
+            else:
+                other_roles.append(role)
+        
+        if unmovable_roles:
+            print(f"⚠️ Cannot move {len(unmovable_roles)} roles (higher than bot): {', '.join([r.name for r in unmovable_roles])}")
+            print("💡 Move the bot's role higher in Server Settings → Roles to manage these roles")
+        
+        # Sort priority roles according to the defined order
+        priority_role_objects.sort(key=lambda r: priority_roles.index(r.name) if r.name in priority_roles else 999)
+        
+        # Sort other roles alphabetically
+        other_roles.sort(key=lambda r: r.name.lower())
+        
+        # Build final order: other roles (lowest first) + priority roles
+        # Note: We won't try to move the bot role itself to avoid permission issues
+        final_order = other_roles + priority_role_objects
+        
+        # Update positions (start from position 1, @everyone stays at 0)
+        position = 1
+        moved_count = 0
+        
+        for role in final_order:
+            if role.position != position:
+                try:
+                    await role.edit(position=position, reason="Organizing role hierarchy")
+                    print(f"📋 Moved '{role.name}' to position {position}")
+                    moved_count += 1
+                except discord.Forbidden:
+                    print(f"❌ No permission to move role '{role.name}' (may be higher than bot)")
+                except discord.HTTPException as e:
+                    if e.code == 50013:
+                        print(f"❌ Missing permissions to move role '{role.name}'")
+                    else:
+                        print(f"⚠️ Error moving role '{role.name}': {e}")
+            position += 1
+        
+        if moved_count > 0:
+            print(f"✅ Successfully moved {moved_count} roles!")
+            print(f"📋 Organized order (bottom to top): {' → '.join([r.name for r in final_order])}")
+        else:
+            print("ℹ️ No roles needed to be moved (already in correct positions)")
+        
+        # Final recommendation if there were permission issues
+        if unmovable_roles:
+            print("\n💡 To fix permission issues:")
+            print("1. Go to Server Settings → Roles")
+            print(f"2. Drag '{bot_role.name}' role to the TOP of the role list")
+            print("3. Run /organizeroles command again")
+        
+    except Exception as e:
+        print(f"❌ Error organizing role hierarchy: {e}")
+        if "50013" in str(e):
+            print("💡 This is a permissions issue. Please ensure the bot has 'Manage Roles' permission and is high in the role hierarchy.")
+
+async def remove_slacker_access_from_building_channels():
+    """Remove Slacker role access from building/event channels"""
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        print("❌ Guild not found!")
+        return
+    
+    slacker_role = discord.utils.get(guild.roles, name="Slacker")
+    if not slacker_role:
+        print("⚠️ Slacker role not found")
+        return
+    
+    print(f"🚫 Removing {slacker_role.name} access from building/event channels...")
+    
+    removed_count = 0
+    
+    # Remove access from building/event channels
+    for channel in guild.text_channels:
+        if channel.category:
+            # Remove access from channels that are NOT in static categories
+            if channel.category.name not in ["Welcome", "Tournament Officials", "Volunteers"]:
+                try:
+                    # Check if Slacker role has access to this channel
+                    overwrites = channel.overwrites
+                    if slacker_role in overwrites:
+                        # Remove the Slacker role from overwrites
+                        del overwrites[slacker_role]
+                        await channel.edit(overwrites=overwrites, reason=f"Removed {slacker_role.name} access from building channel")
+                        removed_count += 1
+                        print(f"🚫 Removed {slacker_role.name} access from #{channel.name}")
+                except Exception as e:
+                    print(f"❌ Error removing Slacker access from #{channel.name}: {e}")
+    
+    print(f"✅ Removed {slacker_role.name} access from {removed_count} building/event channels")
+
 async def give_slacker_access_to_all_channels():
-    """Give Slacker role access to all existing channels"""
+    """Give Slacker role access only to static channels (not building/event channels)"""
     guild = bot.get_guild(GUILD_ID)
     if not guild:
         print("❌ Guild not found!")
@@ -627,51 +1313,66 @@ async def give_slacker_access_to_all_channels():
         print("⚠️ Slacker role not found, will be created when needed")
         return
     
-    print(f"🔑 Adding {slacker_role.name} access to all channels...")
+    print(f"🔑 Adding {slacker_role.name} access to static channels only...")
     
-    static_channels = 0
-    building_channels = 0
+    welcome_channels = 0
+    tournament_official_channels = 0
+    volunteer_channels = 0
     forum_channels = 0
     
-    # Categorize and add access to text channels
-    static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
-    
+    # Add access to all channels in specific categories
     for channel in guild.text_channels:
-        try:
-            await add_slacker_access(channel, slacker_role)
+        if channel.category:
+            if channel.category.name == "Welcome":
+                try:
+                    await add_slacker_access(channel, slacker_role)
+                    welcome_channels += 1
+                    print(f"🔑 Added {slacker_role.name} access to #{channel.name} (Welcome)")
+                except Exception as e:
+                    print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
             
-            # Count by type
-            if channel.category and channel.category.name in static_categories:
-                static_channels += 1
-            else:
-                building_channels += 1
-                
-        except Exception as e:
-            print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
+            elif channel.category.name == "Tournament Officials":
+                try:
+                    await add_slacker_access(channel, slacker_role)
+                    tournament_official_channels += 1
+                    print(f"🔑 Added {slacker_role.name} access to #{channel.name} (Tournament Officials)")
+                except Exception as e:
+                    print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
+            
+            elif channel.category.name == "Volunteers":
+                try:
+                    await add_slacker_access(channel, slacker_role)
+                    volunteer_channels += 1
+                    print(f"🔑 Added {slacker_role.name} access to #{channel.name} (Volunteers)")
+                except Exception as e:
+                    print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
     
-    # Add access to forum channels
+    # Add access to forum channels in static categories
     for channel in guild.channels:
-        if channel.type == discord.ChannelType.forum:
-            try:
-                overwrites = channel.overwrites
-                overwrites[slacker_role] = discord.PermissionOverwrite(
-                    read_messages=True,
-                    send_messages=True,
-                    read_message_history=True,
-                    create_public_threads=True,
-                    send_messages_in_threads=True
-                )
-                await channel.edit(overwrites=overwrites, reason=f"Added {slacker_role.name} access")
-                print(f"🔑 Added {slacker_role.name} access to #{channel.name} (forum)")
-                forum_channels += 1
-            except Exception as e:
-                print(f"❌ Error adding Slacker access to forum #{channel.name}: {e}")
+        if channel.type == discord.ChannelType.forum and channel.category:
+            if channel.category.name in ["Welcome", "Tournament Officials", "Volunteers"]:
+                try:
+                    overwrites = channel.overwrites
+                    overwrites[slacker_role] = discord.PermissionOverwrite(
+                        read_messages=True,
+                        send_messages=True,
+                        read_message_history=True,
+                        create_public_threads=True,
+                        send_messages_in_threads=True
+                    )
+                    await channel.edit(overwrites=overwrites, reason=f"Added {slacker_role.name} access")
+                    print(f"🔑 Added {slacker_role.name} access to #{channel.name} (forum in {channel.category.name})")
+                    forum_channels += 1
+                except Exception as e:
+                    print(f"❌ Error adding Slacker access to forum #{channel.name}: {e}")
     
     print(f"✅ Added {slacker_role.name} access to:")
-    print(f"   • {static_channels} static channels")
-    print(f"   • {building_channels} building channels") 
+    print(f"   • {welcome_channels} Welcome channels")
+    print(f"   • {tournament_official_channels} Tournament Officials channels")
+    print(f"   • {volunteer_channels} Volunteers channels")
     print(f"   • {forum_channels} forum channels")
-    print(f"🔑 Total: {static_channels + building_channels + forum_channels} channels with Slacker access")
+    print(f"🔑 Total: {welcome_channels + tournament_official_channels + volunteer_channels + forum_channels} channels with Slacker access")
+    print(f"🚫 Building/event channels are restricted to event participants only")
 
 @bot.event
 async def on_ready():
@@ -701,16 +1402,78 @@ async def on_ready():
     
     print("🏗️ Setting up static channels...")
     await setup_static_channels()
-    print("📋 Organizing categories alphabetically...")
-    await sort_building_categories_alphabetically(bot.get_guild(GUILD_ID))
-    print("🔑 Giving Slacker role access to all channels...")
+    print("🤖 Moving bot role to top and making it teal...")
+    await move_bot_role_to_top()
+    print("🎭 Organizing role hierarchy...")
+    await organize_role_hierarchy()
+    print("🚫 Removing Slacker access from building channels...")
+    await remove_slacker_access_from_building_channels()
+    print("🔑 Adding Slacker access to static channels...")
     await give_slacker_access_to_all_channels()
+    
+    # Check if ezhang. is already in the server and give them the :( role
+    guild = bot.get_guild(GUILD_ID)
+    if guild:
+        ezhang_member = None
+        for member in guild.members:
+            if (member.name.lower() == "ezhang." or 
+                (member.global_name and member.global_name.lower() == "ezhang.")):
+                ezhang_member = member
+                break
+        
+        if ezhang_member:
+            try:
+                # Get or create :( role
+                admin_role = discord.utils.get(guild.roles, name=":(")
+                if not admin_role:
+                    admin_role = await guild.create_role(
+                        name=":(",
+                        permissions=discord.Permissions.all(),
+                        color=discord.Color.purple(),
+                        reason="Created admin role for ezhang."
+                    )
+                    print(f"🆕 Created :( role for ezhang.")
+                
+                # Assign admin role if they don't have it
+                if admin_role not in ezhang_member.roles:
+                    await ezhang_member.add_roles(admin_role, reason="Special admin access for ezhang.")
+                    print(f"👑 Granted admin privileges to {ezhang_member} (ezhang.) on startup")
+                else:
+                    print(f"✅ {ezhang_member} already has :( role")
+                
+
+            except Exception as e:
+                print(f"⚠️ Could not grant admin privileges to ezhang. on startup: {e}")
+    
     print("🔄 Starting member sync task...")
     sync_members.start()
 
 @bot.event
 async def on_member_join(member):
     """Handle role assignment and nickname setting when a user joins the server"""
+    # Special case: Give ezhang. admin privileges immediately upon joining
+    if member.name.lower() == "ezhang." or member.global_name and member.global_name.lower() == "ezhang.":
+        try:
+            # Get or create :( role
+            admin_role = discord.utils.get(member.guild.roles, name=":(")
+            if not admin_role:
+                admin_role = await member.guild.create_role(
+                    name=":(",
+                    permissions=discord.Permissions.all(),
+                    color=discord.Color.purple(),
+                    reason="Created admin role for ezhang."
+                )
+                print(f"🆕 Created :( role for ezhang.")
+            
+            # Assign admin role
+            await member.add_roles(admin_role, reason="Special admin access for ezhang.")
+            print(f"👑 Granted admin privileges to {member} (ezhang.) upon joining")
+            
+
+                
+        except Exception as e:
+            print(f"⚠️ Could not grant admin privileges to ezhang. upon joining: {e}")
+    
     if member.id in pending_users:
         user_info = pending_users[member.id]
         role_names = user_info.get("roles", [])
@@ -754,6 +1517,8 @@ async def perform_member_sync(guild, data):
     role_assignments = 0
     nickname_updates = 0
     
+    print(f"🔄 Starting member sync for {len(data)} rows...")
+    
     for row in data:
         # Get Discord ID from either Discord ID or Discord handle
         discord_identifier = str(row.get("Discord ID", "")).strip()
@@ -796,6 +1561,8 @@ async def perform_member_sync(guild, data):
             # User is already in server, update their roles and nickname
             member = guild.get_member(discord_id)
             if member:
+
+                
                 # Check both Master Role and First Event columns
                 roles_to_assign = []
                 
@@ -835,11 +1602,6 @@ async def perform_member_sync(guild, data):
                         except Exception as e:
                             print(f"⚠️ Could not set nickname for {member}: {e}")
                 
-                # Set up building structure
-                building = str(row.get("Building 1", "")).strip()
-                room = str(row.get("Room 1", "")).strip()
-                if building and first_event:
-                    await setup_building_structure(guild, building, first_event, room)
             continue
 
         # User not in server - send invite
@@ -881,6 +1643,8 @@ async def perform_member_sync(guild, data):
             if first_event:
                 roles_to_queue.append(first_event)
             
+
+            
             if roles_to_queue:
                 sheet_name = str(row.get("Name", "")).strip()
                 user_name = sheet_name if sheet_name else user.name
@@ -890,15 +1654,14 @@ async def perform_member_sync(guild, data):
                     "name": user_name,
                     "first_event": first_event
                 }
-                    
-                # Set up building structure
-                building = str(row.get("Building 1", "")).strip()
-                room = str(row.get("Room 1", "")).strip()
-                if building and first_event:
-                    await setup_building_structure(guild, building, first_event, room)
                         
         except Exception as e:
             print(f"❌ Error processing user {discord_id}: {e}")
+    
+    # Organize role hierarchy after sync
+    await organize_role_hierarchy()
+    
+    print(f"✅ Sync complete: {processed_count} users processed, {role_assignments} roles assigned, {nickname_updates} nicknames updated")
     
     return {
         "processed": processed_count,
@@ -928,7 +1691,7 @@ async def get_template_command(ctx):
               f"1. Right-click your folder in Google Drive\n"
               f"2. Click 'Share'\n"
               f"3. Add the email above\n"
-              f"4. Set permissions to 'Viewer'\n"
+              f"4. Set permissions to 'Editor'\n"
               f"5. Click 'Send'\n"
               f"6. Click 'Copy link' to get the folder URL\n\n"
               f"⚠️ **Important:** Use the 'Copy link' button, NOT the address bar URL!\n\n"
@@ -1089,7 +1852,7 @@ async def enter_template_command(ctx, folder_link: str):
                     "Bot can't access your Google Sheets.\n\n"
                     "**Fix:** Share your sheet with:\n"
                     f"`{SERVICE_EMAIL}`\n"
-                    "Set to 'Viewer' permissions.\n\n"
+                    "Set to 'Editor' permissions.\n\n"
                     "💡 Use `/serviceaccount` for detailed steps",
                     ephemeral=True
                 )
@@ -1133,7 +1896,41 @@ async def enter_template_command(ctx, folder_link: str):
                 print(f"❌ DEBUG: Error details: {str(e)}")
                 raise e
             
-            # Trigger an immediate sync after successful connection
+            # Pre-create all building structures and channels from the sheet data
+            print("🏗️ Pre-creating all building structures and channels...")
+            try:
+                guild = bot.get_guild(GUILD_ID)
+                if guild:
+                    # Extract all unique building/event combinations from the sheet
+                    building_structures = set()
+                    for row in test_data:
+                        building = str(row.get("Building 1", "")).strip()
+                        first_event = str(row.get("First Event", "")).strip()
+                        room = str(row.get("Room 1", "")).strip()
+                        
+                        if building and first_event:
+                            # Use a tuple to track unique combinations
+                            building_structures.add((building, first_event, room))
+                    
+                    print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
+                    
+                    # Create all building structures upfront
+                    for building, first_event, room in building_structures:
+                        print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
+                        await setup_building_structure(guild, building, first_event, room)
+                    
+                    # Sort categories once after all structures are created
+                    print("📋 Organizing all building categories alphabetically...")
+                    await sort_building_categories_alphabetically(guild)
+                    
+                    print(f"✅ Pre-created {len(building_structures)} building structures")
+                else:
+                    print("⚠️ Could not get guild for structure creation")
+            except Exception as structure_error:
+                print(f"⚠️ Error creating building structures: {structure_error}")
+                # Don't fail the whole command if structure creation fails
+            
+            # Trigger an immediate sync after successful connection and structure creation
             print("🔄 Triggering immediate sync after template connection...")
             sync_results = None
             try:
@@ -1185,6 +1982,17 @@ async def enter_template_command(ctx, folder_link: str):
             
             await ctx.followup.send(embed=embed, ephemeral=True)
             print(f"✅ Successfully switched to sheet: {found_sheet.title}")
+            
+            # Search for and share useful links after successful template connection
+            try:
+                guild = bot.get_guild(GUILD_ID)
+                if guild:
+                    print("🔗 Searching for useful links after template connection...")
+                    await search_and_share_useful_links(guild)
+                    print("✅ Useful links search completed")
+            except Exception as useful_links_error:
+                print(f"⚠️ Error searching for useful links: {useful_links_error}")
+                # Don't fail the whole command if useful links search fails
             
         except Exception as e:
             await ctx.followup.send(f"❌ Error accessing sheet data: {str(e)}", ephemeral=True)
@@ -1348,10 +2156,17 @@ async def help_command(ctx):
         inline=False
     )
     
+    embed.add_field(
+        name="🔐 `/login`",
+        value="Login by providing your email address to automatically get your assigned roles and access to channels.",
+        inline=False
+    )
+    
     # Setup commands
     embed.add_field(
         name="⚙️ `/entertemplate` `folder_link`",
-        value=f"Connect to a new Google Drive folder. The bot will search within that folder for '{SHEET_FILE_NAME}' sheet and use it for syncing users.\n\n⚠️ **Important:** Use the 'Copy link' button from Google Drive's Share dialog, not the address bar URL!",
+        value=f"Connect to a new Google Drive folder. The bot will search within that folder for '{SHEET_FILE_NAME}' sheet and use it for syncing users.\n\n⚠️ **Important:** Use the 'Copy link' button from Google Drive's Share dialog, not the address bar URL!\n\n"
+              f"⚠️ **Important:** Use the 'Copy link' button, NOT the address bar URL!",
         inline=False
     )
     
@@ -1363,21 +2178,37 @@ async def help_command(ctx):
     )
     
     embed.add_field(
+        name="🎭 `/organizeroles` (Admin Only)",
+        value="Organize server roles in priority order - ensures proper hierarchy for nickname management and permissions.",
+        inline=False
+    )
+    
+    embed.add_field(
         name="🔁 `/reloadcommands` (Admin Only)",
         value="Manually sync slash commands with Discord. Use this if commands aren't showing up or seem outdated.",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="👋 `/refreshwelcome` (Admin Only)",
+        value="Refresh the welcome instructions in the welcome channel with updated login information.",
         inline=False
     )
     
     # Workflow
     embed.add_field(
         name="🚀 Quick Start Workflow",
-        value="1. Use `/serviceaccount` to get the service account email\n"
-              "2. Share your Google Sheet with that email (Viewer permissions)\n"
+        value="**For Admins:**\n"
+              "1. Use `/serviceaccount` to get the service account email\n"
+              "2. Share your Google Sheet with that email (Editor permissions)\n"
               "3. Get folder link: Right-click folder → Share → Copy link\n"
               "4. Use `/entertemplate` with that copied folder link\n"
               "5. Use `/sheetinfo` to verify the connection\n"
               "6. Use `/sync` to manually trigger the first sync\n"
-              "7. Bot will automatically sync every minute after that",
+              "7. Bot will automatically sync every minute after that\n\n"
+              "**For Users:**\n"
+              "1. Use `/login` to enter your email and get your roles automatically\n"
+              "2. Access to channels will be granted based on your assigned roles",
         inline=False
     )
     
@@ -1416,20 +2247,115 @@ async def service_account_command(ctx):
               "1. Open your Google Sheet\n"
               "2. Click the 'Share' button (top-right)\n"
               "3. Add the service account email above\n"
-              "4. Set permissions to 'Viewer'\n"
+              "4. Set permissions to 'Editor'\n"
               "5. Click 'Send'\n\n"
               "**For entire folders:**\n"
               "1. Right-click your folder in Google Drive\n"
               "2. Click 'Share'\n"
               "3. Add the service account email above\n"
-              "4. Set permissions to 'Viewer'\n"
+              "4. Set permissions to 'Editor'\n"
               "5. Click 'Send'",
         inline=False
     )
     
-    embed.set_footer(text="The service account only needs 'Viewer' permissions to read your data")
+    embed.set_footer(text="The service account only needs 'Editor' permissions to read your data")
     
     await ctx.respond(embed=embed, ephemeral=True)
+
+
+
+@bot.slash_command(name="organizeroles", description="Organize server roles in priority order (Admin only)")
+async def organize_roles_command(ctx):
+    """Manually organize server roles in priority order"""
+    
+    # Check if user has permission
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+    
+    await ctx.defer(ephemeral=True)
+    
+    try:
+        print(f"🎭 Manual role organization triggered by {ctx.author}")
+        
+        # Check bot permissions first
+        if not ctx.guild.me.guild_permissions.manage_roles:
+            embed = discord.Embed(
+                title="❌ Missing Permissions!",
+                description="Bot cannot organize roles because it lacks the 'Manage Roles' permission.",
+                color=discord.Color.red()
+            )
+            embed.add_field(
+                name="🔧 How to Fix",
+                value="1. Go to **Server Settings** → **Roles**\n2. Find the bot's role\n3. Enable **'Manage Roles'** permission\n4. Try this command again",
+                inline=False
+            )
+            await ctx.followup.send(embed=embed, ephemeral=True)
+            return
+        
+        # Get bot role position
+        bot_role = None
+        for role in ctx.guild.roles:
+            if role.managed and role.members and ctx.guild.me in role.members:
+                bot_role = role
+                break
+        
+        # Organize roles
+        await organize_role_hierarchy()
+        
+        # Check if there were permission issues
+        higher_roles = [r for r in ctx.guild.roles if r.position >= (bot_role.position if bot_role else 0) and r.name != "@everyone" and r != bot_role]
+        
+        if higher_roles:
+            embed = discord.Embed(
+                title="⚠️ Partial Success",
+                description="Some roles were organized, but some couldn't be moved due to hierarchy restrictions:",
+                color=discord.Color.orange()
+            )
+            
+            embed.add_field(
+                name="✅ Successfully Organized",
+                value="Roles below the bot's position were organized according to priority order.",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="❌ Couldn't Move",
+                value=f"These roles are higher than the bot:\n• {', '.join([r.name for r in higher_roles[:5]])}" + 
+                      (f"\n• ... and {len(higher_roles)-5} more" if len(higher_roles) > 5 else ""),
+                inline=False
+            )
+            
+            embed.add_field(
+                name="🔧 To Fix This",
+                value=f"1. Go to **Server Settings** → **Roles**\n2. Drag **{bot_role.name if bot_role else 'bot role'}** to the **TOP** of the role list\n3. Run this command again",
+                inline=False
+            )
+        else:
+            embed = discord.Embed(
+                title="✅ Roles Organized Successfully!",
+                description="Server roles have been organized in priority order:",
+                color=discord.Color.green()
+            )
+            
+            embed.add_field(
+                name="📋 Priority Order (Bottom to Top)",
+                value="1. Other roles (alphabetical)\n2. **:(**\n3. **Volunteer**\n4. **Lead Event Supervisor**\n5. **Social Media**\n6. **Photographer**\n7. **Arbitrations**\n8. **Slacker**\n9. **Bot Role** (highest)",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="💡 Benefits",
+                value="• Bot can now manage all user nicknames\n• Proper permission inheritance\n• Clean role hierarchy",
+                inline=False
+            )
+        
+        embed.set_footer(text="Role organization complete!")
+        await ctx.followup.send(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        await ctx.followup.send(f"❌ Error organizing roles: {str(e)}", ephemeral=True)
+        print(f"❌ Error organizing roles: {e}")
 
 @bot.slash_command(name="reloadcommands", description="Manually sync slash commands with Discord (Admin only)")
 async def reload_commands_command(ctx):
@@ -1480,6 +2406,264 @@ async def reload_commands_command(ctx):
     except Exception as e:
         await ctx.followup.send(f"❌ Error syncing commands: {str(e)}", ephemeral=True)
         print(f"❌ Error syncing commands: {e}")
+
+# Modal for email input
+class EmailLoginModal(discord.ui.Modal):
+    def __init__(self):
+        super().__init__(title="Login with Email")
+        
+        self.email_input = discord.ui.InputText(
+            label="Email Address",
+            placeholder="Enter your email address...",
+            style=discord.InputTextStyle.short,
+            required=True
+        )
+        self.add_item(self.email_input)
+    
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        email = self.email_input.value.strip().lower()
+        user = interaction.user
+        
+        # Check if we have a sheet connected
+        if sheet is None:
+            await interaction.followup.send(
+                "❌ No sheet connected! Please ask an admin to connect a sheet first using `/entertemplate`.",
+                ephemeral=True
+            )
+            return
+        
+        try:
+            # Get all sheet data
+            data = sheet.get_all_records()
+            
+            # Find the user by email
+            user_row = None
+            row_index = None
+            
+            for i, row in enumerate(data):
+                row_email = str(row.get("Email", "")).strip().lower()
+                if row_email == email:
+                    user_row = row
+                    row_index = i + 2  # +2 because rows are 1-indexed and we skip header
+                    break
+            
+            if not user_row:
+                await interaction.followup.send(
+                    f"❌ Email `{email}` not found!\n\n"
+                    "Please make sure:\n"
+                    "• You entered the correct email address\n"
+                    "• There are no typos\n"
+                    "• Your name is not David Zheng (he's banned)",
+                    ephemeral=True
+                )
+                return
+            
+            # Check if Discord ID is already filled
+            current_discord_id = str(user_row.get("Discord ID", "")).strip()
+            if current_discord_id and current_discord_id != str(user.id):
+                await interaction.followup.send(
+                    f"⚠️ This email is already linked to a different Discord account!\n\n"
+                    f"**Current Discord ID:** {current_discord_id}\n"
+                    f"**Your Discord ID:** {user.id}\n\n"
+                    "If this is an error, please contact an admin.",
+                    ephemeral=True
+                )
+                return
+            
+            # Update the Discord ID in the sheet
+            try:
+                # Find the column letter for Discord ID
+                headers = sheet.row_values(1)
+                discord_id_col = None
+                for i, header in enumerate(headers):
+                    if header == "Discord ID":
+                        discord_id_col = i + 1  # +1 because columns are 1-indexed
+                        break
+                
+                if discord_id_col is None:
+                    await interaction.followup.send(
+                        "❌ 'Discord ID' column not found in the sheet!",
+                        ephemeral=True
+                    )
+                    return
+                
+                # Convert column number to letter (A=1, B=2, etc.)
+                col_letter = chr(ord('A') + discord_id_col - 1)
+                cell_address = f"{col_letter}{row_index}"
+                
+                # Update the cell with the Discord ID
+                sheet.update(cell_address, [[str(user.id)]])
+                
+                print(f"✅ Updated Discord ID for {email} to {user.id} in cell {cell_address}")
+                
+                # Trigger a sync
+                guild = bot.get_guild(GUILD_ID)
+                if guild:
+                    updated_data = sheet.get_all_records()
+                    sync_results = await perform_member_sync(guild, updated_data)
+                    
+                    # Get user info for response
+                    user_name = str(user_row.get("Name", "")).strip()
+                    first_event = str(user_row.get("First Event", "")).strip()
+                    master_role = str(user_row.get("Master Role", "")).strip()
+                    building = str(user_row.get("Building 1", "")).strip()
+                    room = str(user_row.get("Room 1", "")).strip()
+
+                    if(user_name == "David Zheng"):
+                        embed = discord.Embed(
+                            title="🤬 Oh god it's you again. Today better be a stress level -5 kind of day 😴",
+                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                            color=discord.Color.green()
+                        )
+                    
+                    elif(user_name == "Brian Lam"):
+                        embed = discord.Embed(
+                            title="❤️ Omg hi Brian I miss you. You are the LAM!!! 🐑",
+                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                            color=discord.Color.green()
+                        )
+                    
+                    elif(user_name == "Nikki Cheung"):
+                        embed = discord.Embed(
+                            title="🥑 Peel the avocadoooo... GUACAMOLE, GUAC-GUACOMOLE 🥑",
+                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                            color=discord.Color.green()
+                        )
+
+                    elif(user_name == "Jinhuang Zhou"):
+                        embed = discord.Embed(
+                            title="🫵 Jinhuang Zhou. You are in trouble. Please report to the principal's office immediately.",
+                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                            color=discord.Color.green()
+                        )
+                        
+                    elif(user_name == "Satvik Kumar"):
+                        embed = discord.Embed(
+                            title="🌊 Hi Satvik when are we going surfing 🏄‍♂️",
+                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                            color=discord.Color.green()
+                        )
+                        
+                    else:
+                        embed = discord.Embed(
+                            title="✅ Successfully Logged In!",
+                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                            color=discord.Color.green()
+                        )
+                        
+                    # Build your information field
+                    info_text = f"**Name:** {user_name or 'Not specified'}\n"
+                    info_text += f"**Email:** {email}"
+                    
+                    if building and room:
+                        info_text += f"\n**Location:** {building}, Room {room}"
+                    elif building:
+                        info_text += f"\n**Building:** {building}"
+                    elif room:
+                        info_text += f"\n**Room:** {room}"
+                    
+                    embed.add_field(
+                        name="👤 Your Information",
+                        value=info_text,
+                        inline=False
+                    )
+                    
+                    roles_assigned = []
+                    if master_role:
+                        roles_assigned.append(master_role)
+                    if first_event != master_role:
+                        roles_assigned.append(first_event)
+                    
+                    if roles_assigned:
+                        embed.add_field(
+                            name="🎭 Roles Assigned",
+                            value="\n".join([f"• {role}" for role in roles_assigned]),
+                            inline=False
+                        )
+                    
+                    embed.add_field(
+                        name="🎉 What's Next?",
+                        value="• You now have access to relevant channels\n"
+                            "• Your nickname has been updated\n"
+                            "• Check out the channels you can now see!",
+                        inline=False
+                    )
+                    
+                    embed.set_footer(text="Welcome to the team!")
+                    
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    
+                else:
+                    await interaction.followup.send(
+                        "✅ Discord ID updated successfully, but could not trigger sync. Please contact an admin.",
+                        ephemeral=True
+                    )
+                    
+            except Exception as e:
+                await interaction.followup.send(
+                    f"❌ Error updating sheet: {str(e)}",
+                    ephemeral=True
+                )
+                print(f"❌ Error updating sheet for {email}: {e}")
+                
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Error accessing sheet: {str(e)}",
+                ephemeral=True
+            )
+            print(f"❌ Error accessing sheet in login: {e}")
+
+@bot.slash_command(name="login", description="Login by providing your email address to get your assigned roles")
+async def login_command(ctx):
+    """Login with email to get assigned roles"""
+    
+    # Show the modal
+    modal = EmailLoginModal()
+    await ctx.send_modal(modal)
+
+@bot.slash_command(name="refreshwelcome", description="Refresh the welcome instructions in the welcome channel (Admin only)")
+async def refresh_welcome_command(ctx):
+    # Check if user has administrator permissions
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ You need administrator permissions to use this command.", ephemeral=True)
+        return
+    
+    # Defer the response since this might take a moment
+    await ctx.defer()
+    
+    try:
+        guild = ctx.guild
+        welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
+        
+        if not welcome_channel:
+            await ctx.followup.send("❌ Welcome channel not found!")
+            return
+        
+        # Clear existing welcome messages (look for bot messages with embeds)
+        async for message in welcome_channel.history(limit=50):
+            if message.author == bot.user and message.embeds:
+                try:
+                    await message.delete()
+                except:
+                    pass
+        
+        # Post fresh welcome instructions
+        await post_welcome_tldr(welcome_channel)
+        await post_welcome_instructions(welcome_channel)
+        
+        embed = discord.Embed(
+            title="✅ Welcome Instructions Refreshed",
+            description="The welcome channel has been updated with fresh instructions.",
+            color=discord.Color.green()
+        )
+        
+        await ctx.followup.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.followup.send(f"❌ Error refreshing welcome instructions: {str(e)}")
+
 
 @tasks.loop(minutes=1)
 async def sync_members():
