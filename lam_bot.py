@@ -270,9 +270,10 @@ async def setup_building_structure(guild, building, first_event, room=None):
     """Set up category and channels for a building and event"""
     print(f"🏗️ DEBUG: Setting up building structure - Building: '{building}', Event: '{first_event}', Room: '{room}'")
     
-    # Skip creating building chat for Slacker role or if first_event is not "other"
-    if first_event and (first_event.lower() == "slacker" or first_event.lower() != "other"):
-        print(f"⏭️ Skipping building structure creation for '{first_event}' in {building} (only 'other' events get building structures)")
+    # Skip creating building chat for priority/custom roles (only create for actual event roles)
+    priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Slacker", "VIPer"]
+    if first_event and first_event in priority_roles:
+        print(f"⏭️ Skipping building structure creation for priority role '{first_event}' in {building} (only event roles get building structures)")
         return
     
     # Create or get the building category
@@ -382,8 +383,19 @@ async def search_and_share_test_folder(guild, role_name):
             return
         
         event_folder = event_folders[0]
-        folder_link = event_folder['webViewLink']
-        print(f"✅ DEBUG: Found test folder for {role_name}: {folder_link}")
+        event_folder_id = event_folder['id']
+        print(f"✅ DEBUG: Found test folder for {role_name}: {event_folder_id}")
+        
+        # Get all files in the event folder
+        files_query = f"'{event_folder_id}' in parents and trashed=false"
+        files_results = drive_service.files().list(q=files_query, fields='files(id, name, webViewLink, mimeType)').execute()
+        files = files_results.get('files', [])
+        
+        if not files:
+            print(f"❌ DEBUG: No files found in {role_name} test folder")
+            return
+        
+        print(f"✅ DEBUG: Found {len(files)} files in {role_name} test folder")
         
         # Find the appropriate channel to post to (event-specific channel)
         target_channel = None
@@ -426,17 +438,55 @@ async def search_and_share_test_folder(guild, role_name):
             color=discord.Color.green()
         )
         
-        embed.add_field(
-            name="🔗 Google Drive Folder",
-            value=f"[**Click here to access {role_name} test materials**]({folder_link})",
-            inline=False
-        )
+        # Create file links as bullet points
+        file_links = []
+        for file in files:
+            file_name = file['name']
+            file_link = file['webViewLink']
+            
+            # Determine file type emoji
+            mime_type = file.get('mimeType', '')
+            if 'pdf' in mime_type:
+                emoji = "📄"
+            elif 'document' in mime_type:
+                emoji = "📝"
+            elif 'spreadsheet' in mime_type:
+                emoji = "📊"
+            elif 'presentation' in mime_type:
+                emoji = "📖"
+            elif 'image' in mime_type:
+                emoji = "🖼️"
+            elif 'folder' in mime_type:
+                emoji = "📁"
+            else:
+                emoji = "📎"
+            
+            file_links.append(f"• {emoji} [**{file_name}**]({file_link})")
         
-        embed.add_field(
-            name="📋 What's Inside",
-            value="• Event tests and answer keys\n• Event rules and regulations\n• Scoresheets for build events",
-            inline=False
-        )
+        # Split into chunks if too long for Discord (2000 character limit per field)
+        files_text = "\n".join(file_links)
+        if len(files_text) > 1900:  # Leave some buffer
+            # Split into multiple fields
+            chunk_size = 1900
+            chunks = []
+            current_chunk = ""
+            
+            for link in file_links:
+                if len(current_chunk + link + "\n") > chunk_size:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = link + "\n"
+                else:
+                    current_chunk += link + "\n"
+            
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            
+            # Add chunks as separate fields
+            for i, chunk in enumerate(chunks):
+                field_name = "📋 Test Materials" if i == 0 else f"📋 Test Materials (continued {i+1})"
+                embed.add_field(name=field_name, value=chunk, inline=False)
+        else:
+            embed.add_field(name="📋 Test Materials", value=files_text, inline=False)
 
         # Post the embed to the channel
         message = await target_channel.send(embed=embed)
@@ -540,8 +590,19 @@ async def search_and_share_useful_links(guild):
             return
         
         useful_links_folder = useful_links_folders[0]
-        folder_link = useful_links_folder['webViewLink']
-        print(f"✅ DEBUG: Found Useful Links folder: {folder_link}")
+        useful_links_folder_id = useful_links_folder['id']
+        print(f"✅ DEBUG: Found Useful Links folder: {useful_links_folder_id}")
+        
+        # Get all files in the Useful Links folder
+        files_query = f"'{useful_links_folder_id}' in parents and trashed=false"
+        files_results = drive_service.files().list(q=files_query, fields='files(id, name, webViewLink, mimeType)').execute()
+        files = files_results.get('files', [])
+        
+        if not files:
+            print(f"❌ DEBUG: No files found in Useful Links folder")
+            return
+        
+        print(f"✅ DEBUG: Found {len(files)} files in Useful Links folder")
         
         # Find the volunteers useful-links channel
         target_channel = discord.utils.get(guild.text_channels, name="useful-links")
@@ -572,17 +633,55 @@ async def search_and_share_useful_links(guild):
             color=discord.Color.green()
         )
         
-        embed.add_field(
-            name="📁 Google Drive Folder",
-            value=f"[**Click here to access Useful Links folder**]({folder_link})",
-            inline=False
-        )
+        # Create file links as bullet points
+        file_links = []
+        for file in files:
+            file_name = file['name']
+            file_link = file['webViewLink']
+            
+            # Determine file type emoji
+            mime_type = file.get('mimeType', '')
+            if 'pdf' in mime_type:
+                emoji = "📄"
+            elif 'document' in mime_type:
+                emoji = "📝"
+            elif 'spreadsheet' in mime_type:
+                emoji = "📊"
+            elif 'presentation' in mime_type:
+                emoji = "📖"
+            elif 'image' in mime_type:
+                emoji = "🖼️"
+            elif 'folder' in mime_type:
+                emoji = "📁"
+            else:
+                emoji = "📎"
+            
+            file_links.append(f"• {emoji} [**{file_name}**]({file_link})")
         
-        embed.add_field(
-            name="📋 What's Inside",
-            value="• Tournament schedules and timelines\n• Contact information and directories\n• Important forms and documents\n• Reference materials and guides",
-            inline=False
-        )
+        # Split into chunks if too long for Discord (2000 character limit per field)
+        files_text = "\n".join(file_links)
+        if len(files_text) > 1900:  # Leave some buffer
+            # Split into multiple fields
+            chunk_size = 1900
+            chunks = []
+            current_chunk = ""
+            
+            for link in file_links:
+                if len(current_chunk + link + "\n") > chunk_size:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = link + "\n"
+                else:
+                    current_chunk += link + "\n"
+            
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            
+            # Add chunks as separate fields
+            for i, chunk in enumerate(chunks):
+                field_name = "📋 Useful Links" if i == 0 else f"📋 Useful Links (continued {i+1})"
+                embed.add_field(name=field_name, value=chunk, inline=False)
+        else:
+            embed.add_field(name="📋 Useful Links", value=files_text, inline=False)
         
         # Post the embed to the channel
         message = await target_channel.send(embed=embed)
