@@ -23,7 +23,7 @@ DEFAULT_ROLE_COLOR = os.getenv("DEFAULT_ROLE_COLOR", "light_gray")  # blue, red,
 # Set to True to COMPLETELY RESET the server on bot startup
 # WARNING: This will permanently delete ALL channels, categories, roles, and reset all nicknames!
 # This is IRREVERSIBLE! Use only for testing or complete server reset!
-RESET_SERVER = True
+RESET_SERVER = bool(os.getenv("RESET_SERVER").lower() == "true")
 
 intents = discord.Intents.default()
 intents.members = True
