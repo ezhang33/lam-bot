@@ -434,7 +434,7 @@ async def search_and_share_test_folder(guild, role_name):
         # Create embed for the test materials
         embed = discord.Embed(
             title=f"📚 Test Materials for {role_name}",
-            description=f"Access your event-specific test materials and resources!",
+            description=f"Access your event-specific test materials and resources!\nPlease DO NOT share these materials with ANYBODY else (not even volunteers from different events).",
             color=discord.Color.green()
         )
         
@@ -2105,7 +2105,7 @@ async def enter_template_command(ctx, folder_link: str):
         await ctx.followup.send(f"❌ Error processing folder: {str(e)}", ephemeral=True)
         return
 
-@bot.slash_command(name="sync", description="Manually trigger a member sync from the current Google Sheet")
+@bot.slash_command(name="sync", description="Manually trigger a member sync from the current Google Sheet (admin only)")
 async def sync_command(ctx):
     """Manually trigger a member sync"""
     
@@ -2226,6 +2226,97 @@ async def sheet_info_command(ctx):
     
     await ctx.respond(embed=embed, ephemeral=True)
 
+def _run_kmeans_clustering(points, k, max_iterations=100):
+	"""Run a simple K-means clustering on 2D points.
+
+	Args:
+		points: List of (lat, lon) floats.
+		k: Number of clusters.
+		max_iterations: Max iterations to converge.
+
+	Returns:
+		labels: List[int] cluster index per point (0..k-1)
+	"""
+	if not points:
+		return []
+	if k <= 0:
+		# Degenerate: one cluster for all points
+		return [0] * len(points)
+	if k >= len(points):
+		return list(range(len(points)))
+
+	# For closely spaced points, use a more robust initialization
+	import random
+	random.seed(42)  # For reproducible results
+	
+	# Use k-means++ style initialization for better results
+	centroids = [list(random.choice(points))]  # Start with random point
+	
+	for _ in range(k - 1):
+		# Find the point that's farthest from existing centroids
+		max_dist = 0
+		farthest_point = None
+		for point in points:
+			min_dist_to_centroids = min(
+				(point[0] - c[0])**2 + (point[1] - c[1])**2 
+				for c in centroids
+			)
+			if min_dist_to_centroids > max_dist:
+				max_dist = min_dist_to_centroids
+				farthest_point = point
+		
+		if farthest_point:
+			centroids.append(list(farthest_point))
+		else:
+			# Fallback: add a random point
+			centroids.append(list(random.choice(points)))
+
+	def distance_sq(a, b):
+		return (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1])
+
+	labels = [0] * len(points)
+	for iteration in range(max_iterations):
+		changed = False
+		for i, p in enumerate(points):
+			best_idx = 0
+			best_dist = distance_sq(p, centroids[0])
+			for j in range(1, k):
+				d = distance_sq(p, centroids[j])
+				if d < best_dist:
+					best_dist = d
+					best_idx = j
+			if labels[i] != best_idx:
+				labels[i] = best_idx
+				changed = True
+
+		# Update centroids
+		sums = [[0.0, 0.0, 0] for _ in range(k)]
+		for idx, p in enumerate(points):
+			c = labels[idx]
+			sums[c][0] += p[0]
+			sums[c][1] += p[1]
+			sums[c][2] += 1
+		
+		# Handle empty clusters by reassigning to a random point
+		for j in range(k):
+			if sums[j][2] > 0:
+				centroids[j][0] = sums[j][0] / sums[j][2]
+				centroids[j][1] = sums[j][1] / sums[j][2]
+			else:
+				# Empty cluster: assign to a random point
+				centroids[j] = list(random.choice(points))
+
+		if not changed:
+			break
+
+	# Debug: print cluster distribution
+	cluster_counts = [0] * k
+	for label in labels:
+		cluster_counts[label] += 1
+	print(f"DEBUG: K-means result for k={k}: cluster sizes = {cluster_counts}")
+
+	return labels
+
 @bot.slash_command(name="help", description="Show all available bot commands and how to use them")
 async def help_command(ctx):
     """Show help information for all bot commands"""
@@ -2291,6 +2382,13 @@ async def help_command(ctx):
     embed.add_field(
         name="👋 `/refreshwelcome` (Admin Only)",
         value="Refresh the welcome instructions in the welcome channel with updated login information.",
+        inline=False
+    )
+
+    # Data commands
+    embed.add_field(
+        name="🗺️ `/assignslackerzones` (Admin Only)",
+        value="Cluster rows in 'Slacker Assignments' by building and assign zone numbers (1..k) into the 'zones' column using K-means on latitude/longitude.",
         inline=False
     )
     
@@ -2762,6 +2860,212 @@ async def refresh_welcome_command(ctx):
         
     except Exception as e:
         await ctx.followup.send(f"❌ Error refreshing welcome instructions: {str(e)}")
+
+
+@bot.slash_command(name="assignslackerzones", description="Assign zone numbers per building in 'Slacker Assignments' using K-means (Admin only)")
+async def assign_slacker_zones_command(ctx):
+    """Read 'Slacker Assignments' worksheet, cluster by building into K zones, write labels to 'zones' column."""
+    # Admin only
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
+    await ctx.defer(ephemeral=True)
+
+    # Verify spreadsheet connection
+    global spreadsheet
+    if spreadsheet is None:
+        await ctx.followup.send(
+            "❌ No spreadsheet connected! Use `/entertemplate` first to connect your sheet.",
+            ephemeral=True
+        )
+        return
+
+    # Open the worksheet or find a separate spreadsheet in the same Drive folder
+    worksheet_name = "Slacker Assignments"
+    ws = None
+    try:
+        ws = spreadsheet.worksheet(worksheet_name)
+    except Exception:
+        # If not a tab in the current spreadsheet, search the parent Drive folder for a spreadsheet named like it
+        try:
+            from googleapiclient.discovery import build
+            drive_service = build('drive', 'v3', credentials=creds)
+            # Get parent folder of the currently connected spreadsheet
+            sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
+            parent_folders = sheet_metadata.get('parents', [])
+            if not parent_folders:
+                await ctx.followup.send("❌ Could not determine parent folder to search for 'Slacker Assignments' sheet.", ephemeral=True)
+                return
+            parent_folder_id = parent_folders[0]
+            # Search spreadsheets in same folder
+            q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains '{worksheet_name}'"
+            results = drive_service.files().list(q=q, fields='files(id, name)').execute()
+            files = results.get('files', [])
+            if not files:
+                await ctx.followup.send(f"❌ Could not find a spreadsheet named '{worksheet_name}' in the same folder as the template.", ephemeral=True)
+                return
+            target = files[0]
+            other_sheet = gc.open_by_key(target['id'])
+            # Prefer a worksheet named exactly worksheet_name; otherwise first tab
+            try:
+                ws = other_sheet.worksheet(worksheet_name)
+            except Exception:
+                ws = other_sheet.worksheets()[0]
+        except Exception as e2:
+            await ctx.followup.send(f"❌ Could not locate '{worksheet_name}' in the same Drive folder: {str(e2)}", ephemeral=True)
+            return
+
+    # Fetch data
+    try:
+        headers = ws.row_values(1)
+        rows = ws.get_all_records()
+    except Exception as e:
+        await ctx.followup.send(f"❌ Could not read worksheet data: {str(e)}", ephemeral=True)
+        return
+
+    # Normalize header names for lookups
+    def _find_col_index(name_candidates):
+        for i, h in enumerate(headers):
+            if not h:
+                continue
+            for cand in name_candidates:
+                if h.strip().lower() == cand:
+                    return i + 1  # 1-indexed
+        return None
+
+    building_col_index = _find_col_index(["building"])
+    coords_col_index = _find_col_index(["coordinates"])
+    lat_col_index = _find_col_index(["latitude"]) 
+    lon_col_index = _find_col_index(["longitude"]) 
+    num_zones_col_index = _find_col_index(["number of zones"])
+    zones_col_index = _find_col_index(["zone number"])
+    num_zones = 0
+
+    # Create zones column if missing
+    if zones_col_index is None:
+        try:
+            new_col_idx = len(headers) + 1
+            # Column letter (simple A..Z mapping consistent with rest of file usage)
+            col_letter = chr(ord('A') + new_col_idx - 1)
+            # Use user's preferred header name
+            ws.update(f"{col_letter}1", [["zone number"]])
+            headers.append("zone number")
+            zones_col_index = new_col_idx
+        except Exception as e:
+            await ctx.followup.send(f"❌ Could not create 'zones' column: {str(e)}", ephemeral=True)
+            return
+
+    # Build data per building
+    from collections import defaultdict
+    building_points = defaultdict(list)  # building -> list of (row_idx_1_based, (lat, lon))
+    
+    # Find the global K value from any row that has it
+    global_k = None
+    for row in rows:
+        lower_row = { (k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items() }
+        k_raw = lower_row.get("number of zones", lower_row.get("zones count", lower_row.get("num zones", lower_row.get("k"))))
+        if k_raw is not None and str(k_raw).strip() != "":
+            try:
+                global_k = int(float(k_raw))
+                break  # Found it, use this value for all buildings
+            except Exception:
+                continue
+
+    def _parse_float(val):
+        try:
+            if isinstance(val, str):
+                val = val.strip()
+                if not val:
+                    return None
+            return float(val)
+        except Exception:
+            return None
+
+    for idx, row in enumerate(rows, start=2):  # data starts at row 2
+        # Case-insensitive row access
+        lower_row = { (k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items() }
+        building = str(lower_row.get("building", lower_row.get("building 1", ""))).strip()
+        if not building:
+            continue
+
+        lat = _parse_float(lower_row.get("latitude", lower_row.get("lat")))
+        lon = _parse_float(lower_row.get("longitude", lower_row.get("lon", lower_row.get("lng"))))
+
+        if (lat is None or lon is None) and ("coordinates" in lower_row and lower_row["coordinates"]):
+            coord_str = str(lower_row["coordinates"]).strip()
+            if "," in coord_str:
+                parts = [p.strip() for p in coord_str.split(",")]
+                if len(parts) >= 2:
+                    if lat is None:
+                        lat = _parse_float(parts[0])
+                    if lon is None:
+                        lon = _parse_float(parts[1])
+
+        if lat is None or lon is None:
+            continue
+
+        building_points[building].append((idx, (lat, lon)))
+
+    if not building_points:
+        await ctx.followup.send("⚠️ No valid location rows found to cluster.", ephemeral=True)
+        return
+
+    # Compute clusters and prepare updates
+    updates = []  # list of (row_index, zone_label_str)
+    k_to_use = global_k if global_k is not None and global_k > 0 else 1
+    
+    # Collect ALL points from ALL buildings for global clustering
+    all_points = []
+    all_items = []  # (building, row_idx, point)
+    
+    for bldg, items in building_points.items():
+        for row_idx, point in items:
+            all_points.append(point)
+            all_items.append((bldg, row_idx, point))
+    
+    # Run K-means on ALL points together
+    labels = _run_kmeans_clustering(all_points, k_to_use)
+    
+    # Debug: count cluster distribution by building
+    building_zone_counts = {}  # building -> {zone: count}
+    for i, (bldg, row_idx, point) in enumerate(all_items):
+        zone = labels[i] + 1  # Convert to 1-based
+        if bldg not in building_zone_counts:
+            building_zone_counts[bldg] = {}
+        building_zone_counts[bldg][zone] = building_zone_counts[bldg].get(zone, 0) + 1
+    
+    debug_info = []
+    for bldg, zone_counts in building_zone_counts.items():
+        zones = sorted(zone_counts.keys())
+        counts = [zone_counts[z] for z in zones]
+        debug_info.append(f"{bldg}: zones {zones} (counts {counts})")
+    
+    # Create updates
+    for i, (bldg, row_idx, point) in enumerate(all_items):
+        zone_label = str(labels[i] + 1)  # Convert to 1-based
+        updates.append((row_idx, zone_label))
+
+    # Apply updates (per cell to minimize risk of range mistakes)
+    zones_col_letter = chr(ord('A') + zones_col_index - 1)
+    updated = 0
+    for row_idx, value in updates:
+        try:
+            ws.update(f"{zones_col_letter}{row_idx}", [[value]])
+            updated += 1
+        except Exception:
+            pass
+
+    # Summarize K used per building (limit for brevity)
+    # Send debug info first
+    debug_text = "\n".join(debug_info[:5])  # Limit to first 5 buildings
+    if len(debug_info) > 5:
+        debug_text += f"\n... and {len(debug_info) - 5} more buildings"
+    
+    await ctx.followup.send(
+        f"✅ Assigned {k_to_use} zones for {len(updates)} rows across {len(building_points)} buildings in '{worksheet_name}'.",
+        ephemeral=True
+    )
 
 
 @tasks.loop(minutes=1)
