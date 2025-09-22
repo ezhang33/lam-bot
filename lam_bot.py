@@ -51,6 +51,9 @@ print("📋 Bot starting without sheet connection - use /entertemplate command t
 # Store pending role assignments and user info for users who haven't joined yet
 pending_users = {}  # Changed from pending_roles to store more info
 
+# Track chapter role names globally
+chapter_role_names = set()
+
 async def get_or_create_role(guild, role_name):
     """Get a role by name, or create it if it doesn't exist"""
     role = discord.utils.get(guild.roles, name=role_name)
@@ -79,6 +82,7 @@ async def get_or_create_role(guild, role_name):
         custom_role_colors = {
             # Team roles only
             "Slacker": discord.Color.orange(),
+            "Awards": discord.Color.yellow(),
             "Volunteer": discord.Color.blue(),
             "Lead Event Supervisor": discord.Color.yellow(),
             "Photographer": discord.Color.red(),
@@ -96,6 +100,10 @@ async def get_or_create_role(guild, role_name):
                 discord.Color.green(): "green",
                 discord.Color.red(): "red"
             }.get(role_color, "custom")
+        elif role_name == "Unaffiliated" or role_name in chapter_role_names:
+            # Chapter roles should be green
+            role_color = discord.Color.green()
+            color_name = "green"
         else:
             # Use default color mapping
             color_map = {
@@ -174,7 +182,7 @@ async def get_or_create_channel(guild, channel_name, category, event_role=None, 
         
         # Give Slacker role access only to static channels (not building/event channels)
         slacker_role = discord.utils.get(guild.roles, name="Slacker")
-        static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
+        static_categories = ["Welcome", "Tournament Officials", "Chapters", "Volunteers"]
         if slacker_role and category and category.name in static_categories:
             overwrites[slacker_role] = discord.PermissionOverwrite(
                 read_messages=True,
@@ -223,7 +231,7 @@ async def sort_building_categories_alphabetically(guild):
         print(f"📋 DEBUG: Sorting {len(all_categories)} total categories")
         
         # Separate building categories from static categories
-        static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
+        static_categories = ["Welcome", "Tournament Officials", "Chapters", "Volunteers"]
         building_categories = []
         other_categories = []
         
@@ -242,8 +250,23 @@ async def sort_building_categories_alphabetically(guild):
         # Calculate positions: static categories first, then building categories
         position = 0
         
-        # Position static categories first
+        # Position static categories first in the correct order
+        desired_order = ["Welcome", "Tournament Officials", "Chapters", "Volunteers"]
+        ordered_static_categories = []
+        
+        # Sort other_categories by desired order
+        for desired_name in desired_order:
+            for category in other_categories:
+                if category.name == desired_name:
+                    ordered_static_categories.append(category)
+                    break
+        
+        # Add any remaining static categories that weren't in the desired order
         for category in other_categories:
+            if category not in ordered_static_categories:
+                ordered_static_categories.append(category)
+        
+        for category in ordered_static_categories:
             if category.position != position:
                 await category.edit(position=position, reason="Organizing categories")
                 print(f"📋 Moved category '{category.name}' to position {position}")
@@ -271,7 +294,7 @@ async def setup_building_structure(guild, building, first_event, room=None):
     print(f"🏗️ DEBUG: Setting up building structure - Building: '{building}', Event: '{first_event}', Room: '{room}'")
     
     # Skip creating building chat for priority/custom roles (only create for actual event roles)
-    priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Slacker", "VIPer"]
+    priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Slacker", "VIPer"]
     if first_event and first_event in priority_roles:
         print(f"⏭️ Skipping building structure creation for priority role '{first_event}' in {building} (only event roles get building structures)")
         return
@@ -314,7 +337,7 @@ async def setup_building_structure(guild, building, first_event, room=None):
                 event_channel = await get_or_create_channel(guild, channel_name, category, event_role)
                 
                 # After creating the event channel, search for test materials if this is an event-specific role
-                priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Slacker"]
+                priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Slacker"]
                 if first_event not in priority_roles:
                     print(f"🚀 DEBUG: Starting test folder search after channel creation for: {first_event}")
                     # This is an event-specific role, search for test folder now that channel exists
@@ -550,6 +573,100 @@ async def search_and_share_test_folder(guild, role_name):
         
     except Exception as e:
         print(f"❌ Error searching for test folder for {role_name}: {e}")
+
+async def setup_chapter_structure(guild, chapter_name):
+    """Set up channels for a chapter"""
+    print(f"📖 DEBUG: Setting up chapter structure - Chapter: '{chapter_name}'")
+    
+    # Add to global chapter role names set
+    global chapter_role_names
+    chapter_role_names.add(chapter_name)
+    
+    # Get or create the Chapters category
+    chapters_category = await get_or_create_category(guild, "Chapters")
+    if not chapters_category:
+        return
+    
+    # Sanitize chapter name for Discord channel
+    channel_name = sanitize_for_discord(chapter_name)
+    
+    # Create chapter channel
+    chapter_channel = await get_or_create_channel(guild, channel_name, chapters_category)
+    
+    # Get or create the chapter role
+    chapter_role = await get_or_create_role(guild, chapter_name)
+    
+    if chapter_channel and chapter_role:
+        # Set up permissions so only chapter members can see the channel
+        try:
+            overwrites = chapter_channel.overwrites
+            # Hide from @everyone
+            overwrites[guild.default_role] = discord.PermissionOverwrite(read_messages=False)
+            # Give chapter role access
+            overwrites[chapter_role] = discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=True,
+                read_message_history=True
+            )
+            
+            # Give Slacker role access too
+            slacker_role = discord.utils.get(guild.roles, name="Slacker")
+            if slacker_role:
+                overwrites[slacker_role] = discord.PermissionOverwrite(
+                    read_messages=True,
+                    send_messages=True,
+                    read_message_history=True
+                )
+            
+            await chapter_channel.edit(overwrites=overwrites, reason=f"Set up {chapter_name} chapter permissions")
+            print(f"📖 Set up permissions for #{channel_name} chapter channel")
+            
+            # Sort chapter channels after creating a new one
+            await sort_chapter_channels_alphabetically(guild)
+            
+        except Exception as e:
+            print(f"❌ Error setting up permissions for #{channel_name}: {e}")
+
+async def sort_chapter_channels_alphabetically(guild):
+    """Sort chapter channels alphabetically with unaffiliated at the bottom"""
+    try:
+        # Find the Chapters category
+        chapters_category = discord.utils.get(guild.categories, name="Chapters")
+        if not chapters_category:
+            print("⚠️ Chapters category not found")
+            return
+        
+        # Get all text channels in the Chapters category
+        chapter_channels = [channel for channel in chapters_category.text_channels]
+        if len(chapter_channels) <= 1:
+            print("📖 Not enough chapter channels to sort")
+            return
+        
+        print(f"📖 Sorting {len(chapter_channels)} chapter channels alphabetically...")
+        
+        # Separate unaffiliated from other channels
+        unaffiliated_channels = [ch for ch in chapter_channels if ch.name == "unaffiliated"]
+        other_channels = [ch for ch in chapter_channels if ch.name != "unaffiliated"]
+        
+        # Sort other channels alphabetically
+        other_channels.sort(key=lambda ch: ch.name.lower())
+        
+        # Combine: other channels first, then unaffiliated at the bottom
+        final_order = other_channels + unaffiliated_channels
+        
+        # Update positions within the category
+        for i, channel in enumerate(final_order):
+            if channel.position != i:
+                try:
+                    await channel.edit(position=i, reason="Sorting chapter channels alphabetically")
+                    print(f"📖 Moved #{channel.name} to position {i}")
+                except Exception as e:
+                    print(f"❌ Error moving #{channel.name}: {e}")
+        
+        print("✅ Chapter channels sorted alphabetically (unaffiliated at bottom)")
+        
+    except Exception as e:
+        print(f"❌ Error sorting chapter channels: {e}")
 
 async def search_and_share_useful_links(guild):
     """Search for Useful Links folder and share with volunteers"""
@@ -987,6 +1104,8 @@ async def setup_static_channels():
     
     # Get or create Slacker role for permissions
     slacker_role = await get_or_create_role(guild, "Slacker")
+    # Get or create Awards role for awards-ceremony access
+    awards_role = await get_or_create_role(guild, "Awards")
     
     # Welcome Category
     print("👋 Setting up Welcome category...")
@@ -1022,6 +1141,13 @@ async def setup_static_channels():
                             send_messages=True,
                             read_message_history=True
                         )
+                    # Give Awards role access to awards-ceremony channel
+                    if channel_name == "awards-ceremony" and awards_role:
+                        overwrites[awards_role] = discord.PermissionOverwrite(
+                            read_messages=True,
+                            send_messages=True,
+                            read_message_history=True
+                        )
                     
                     channel = await guild.create_text_channel(
                         name=channel_name,
@@ -1029,7 +1155,10 @@ async def setup_static_channels():
                         overwrites=overwrites,
                         reason="Auto-created by LAM Bot - Tournament Officials only"
                     )
-                    print(f"📺 Created restricted channel: '#{channel_name}' (Slacker only)")
+                    if channel_name == "awards-ceremony":
+                        print(f"📺 Created restricted channel: '#{channel_name}' (Slacker + Awards)")
+                    else:
+                        print(f"📺 Created restricted channel: '#{channel_name}' (Slacker only)")
                     
                     # Ensure Slacker access is properly added after channel creation
                     if slacker_role:
@@ -1038,6 +1167,14 @@ async def setup_static_channels():
                             print(f"✅ Ensured Slacker access to #{channel_name}")
                         except Exception as e:
                             print(f"❌ Error ensuring Slacker access to #{channel_name}: {e}")
+                    
+                    # Ensure Awards role access to awards-ceremony channel
+                    if channel_name == "awards-ceremony" and awards_role:
+                        try:
+                            await add_slacker_access(channel, awards_role)  # Reuse the same function
+                            print(f"✅ Ensured Awards role access to #{channel_name}")
+                        except Exception as e:
+                            print(f"❌ Error ensuring Awards access to #{channel_name}: {e}")
                             
                 except discord.Forbidden:
                     print(f"❌ No permission to create channel '{channel_name}'")
@@ -1057,9 +1194,19 @@ async def setup_static_channels():
                             send_messages=True,
                             read_message_history=True
                         )
+                    # Give Awards role access to awards-ceremony channel
+                    if channel_name == "awards-ceremony" and awards_role:
+                        overwrites[awards_role] = discord.PermissionOverwrite(
+                            read_messages=True,
+                            send_messages=True,
+                            read_message_history=True
+                        )
                     
                     await channel.edit(overwrites=overwrites, reason="Updated to restrict to Slacker role only")
-                    print(f"🔒 Updated #{channel_name} to be Slacker-only")
+                    if channel_name == "awards-ceremony":
+                        print(f"🔒 Updated #{channel_name} to be Slacker + Awards")
+                    else:
+                        print(f"🔒 Updated #{channel_name} to be Slacker-only")
                 except Exception as e:
                     print(f"❌ Error updating permissions for #{channel_name}: {e}")
                 
@@ -1070,6 +1217,18 @@ async def setup_static_channels():
                         print(f"✅ Ensured Slacker access to #{channel_name}")
                     except Exception as e:
                         print(f"❌ Error ensuring Slacker access to #{channel_name}: {e}")
+                
+                # Ensure Awards role access to awards-ceremony channel
+                if channel_name == "awards-ceremony" and awards_role:
+                    try:
+                        await add_slacker_access(channel, awards_role)  # Reuse the same function
+                        print(f"✅ Ensured Awards role access to #{channel_name}")
+                    except Exception as e:
+                        print(f"❌ Error ensuring Awards access to #{channel_name}: {e}")
+    
+    # Chapters Category  
+    print("📖 Setting up Chapters category...")
+    chapters_category = await get_or_create_category(guild, "Chapters")
     
     # Volunteers Category  
     print("🙋 Setting up Volunteers category...")
@@ -1274,6 +1433,7 @@ async def organize_role_hierarchy():
         "Social Media",
         "Photographer",
         "Arbitrations",
+        "Awards",
         "Slacker",
         # Bot role will be handled separately as highest priority
     ]
@@ -1297,8 +1457,9 @@ async def organize_role_hierarchy():
         
         print(f"🤖 Bot role: '{bot_role.name}' (current position: {bot_role.position})")
         
-        # Separate roles into priority roles and other roles
+        # Separate roles into priority roles, chapter roles, and other roles
         priority_role_objects = []
+        chapter_roles = []
         other_roles = []
         unmovable_roles = []
         
@@ -1311,6 +1472,9 @@ async def organize_role_hierarchy():
                 continue
             elif role.name in priority_roles:
                 priority_role_objects.append(role)
+            elif role.name == "Unaffiliated" or role.name in chapter_role_names:
+                # This is a chapter role
+                chapter_roles.append(role)
             else:
                 other_roles.append(role)
         
@@ -1321,12 +1485,19 @@ async def organize_role_hierarchy():
         # Sort priority roles according to the defined order
         priority_role_objects.sort(key=lambda r: priority_roles.index(r.name) if r.name in priority_roles else 999)
         
+        # Sort chapter roles alphabetically
+        chapter_roles.sort(key=lambda r: r.name.lower())
+        
         # Sort other roles alphabetically
         other_roles.sort(key=lambda r: r.name.lower())
         
-        # Build final order: other roles (lowest first) + priority roles
+        # Build final order: other roles (lowest first) + :( role + chapter roles + other priority roles
+        # We need to separate :( role from other priority roles
+        sad_face_roles = [r for r in priority_role_objects if r.name == ":("]
+        other_priority_roles = [r for r in priority_role_objects if r.name != ":("]
+        
         # Note: We won't try to move the bot role itself to avoid permission issues
-        final_order = other_roles + priority_role_objects
+        final_order = other_roles + sad_face_roles + chapter_roles + other_priority_roles
         
         # Update positions (start from position 1, @everyone stays at 0)
         position = 1
@@ -1385,7 +1556,7 @@ async def remove_slacker_access_from_building_channels():
     for channel in guild.text_channels:
         if channel.category:
             # Remove access from channels that are NOT in static categories
-            if channel.category.name not in ["Welcome", "Tournament Officials", "Volunteers"]:
+            if channel.category.name not in ["Welcome", "Tournament Officials", "Chapters", "Volunteers"]:
                 try:
                     # Check if Slacker role has access to this channel
                     overwrites = channel.overwrites
@@ -1438,6 +1609,14 @@ async def give_slacker_access_to_all_channels():
                 except Exception as e:
                     print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
             
+            elif channel.category.name == "Chapters":
+                try:
+                    await add_slacker_access(channel, slacker_role)
+                    volunteer_channels += 1
+                    print(f"🔑 Added {slacker_role.name} access to #{channel.name} (Chapters)")
+                except Exception as e:
+                    print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
+            
             elif channel.category.name == "Volunteers":
                 try:
                     await add_slacker_access(channel, slacker_role)
@@ -1449,7 +1628,7 @@ async def give_slacker_access_to_all_channels():
     # Add access to forum channels in static categories
     for channel in guild.channels:
         if channel.type == discord.ChannelType.forum and channel.category:
-            if channel.category.name in ["Welcome", "Tournament Officials", "Volunteers"]:
+            if channel.category.name in ["Welcome", "Tournament Officials", "Chapters", "Volunteers"]:
                 try:
                     overwrites = channel.overwrites
                     overwrites[slacker_role] = discord.PermissionOverwrite(
@@ -1608,6 +1787,8 @@ async def on_member_join(member):
 
 async def perform_member_sync(guild, data):
     """Core member sync logic that can be used by both /sync command and /entertemplate"""
+    global chapter_role_names
+    
     # Build set of already-joined member IDs
     joined = {m.id for m in guild.members}
 
@@ -1662,7 +1843,7 @@ async def perform_member_sync(guild, data):
             if member:
 
                 
-                # Check both Master Role and First Event columns
+                # Check Master Role, First Event, and Secondary Role columns
                 roles_to_assign = []
                 
                 master_role = str(row.get("Master Role", "")).strip()
@@ -1672,6 +1853,20 @@ async def perform_member_sync(guild, data):
                 first_event = str(row.get("First Event", "")).strip()
                 if first_event:
                     roles_to_assign.append(first_event)
+                
+                secondary_role = str(row.get("Secondary Role", "")).strip()
+                if secondary_role:
+                    roles_to_assign.append(secondary_role)
+                
+                chapter = str(row.get("Chapter", "")).strip()
+                if chapter and chapter.lower() not in ["n/a", "na", ""]:
+                    roles_to_assign.append(chapter)
+                    # Add to chapter role names set
+                    chapter_role_names.add(chapter)
+                else:
+                    roles_to_assign.append("Unaffiliated")
+                    # Unaffiliated is also a chapter role
+                    chapter_role_names.add("Unaffiliated")
                 
                 # Assign each role if they don't have it
                 for role_name in roles_to_assign:
@@ -1741,6 +1936,20 @@ async def perform_member_sync(guild, data):
             first_event = str(row.get("First Event", "")).strip()
             if first_event:
                 roles_to_queue.append(first_event)
+            
+            secondary_role = str(row.get("Secondary Role", "")).strip()
+            if secondary_role:
+                roles_to_queue.append(secondary_role)
+            
+            chapter = str(row.get("Chapter", "")).strip()
+            if chapter and chapter.lower() not in ["n/a", "na", ""]:
+                roles_to_queue.append(chapter)
+                # Add to chapter role names set
+                chapter_role_names.add(chapter)
+            else:
+                roles_to_queue.append("Unaffiliated")
+                # Unaffiliated is also a chapter role
+                chapter_role_names.add("Unaffiliated")
             
 
             
@@ -2002,21 +2211,39 @@ async def enter_template_command(ctx, folder_link: str):
                 if guild:
                     # Extract all unique building/event combinations from the sheet
                     building_structures = set()
+                    chapters = set()
                     for row in test_data:
                         building = str(row.get("Building 1", "")).strip()
                         first_event = str(row.get("First Event", "")).strip()
                         room = str(row.get("Room 1", "")).strip()
+                        chapter = str(row.get("Chapter", "")).strip()
                         
                         if building and first_event:
                             # Use a tuple to track unique combinations
                             building_structures.add((building, first_event, room))
+                        
+                        # Add chapters (including Unaffiliated for blank/N/A)
+                        if chapter and chapter.lower() not in ["n/a", "na", ""]:
+                            chapters.add(chapter)
+                        else:
+                            chapters.add("Unaffiliated")
                     
                     print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
+                    print(f"📖 Found {len(chapters)} unique chapters to create")
                     
                     # Create all building structures upfront
                     for building, first_event, room in building_structures:
                         print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
                         await setup_building_structure(guild, building, first_event, room)
+                    
+                    # Create all chapter structures upfront
+                    for chapter in chapters:
+                        print(f"📖 Pre-creating chapter: {chapter}")
+                        await setup_chapter_structure(guild, chapter)
+                    
+                    # Sort chapter channels alphabetically
+                    print("📖 Organizing chapter channels alphabetically...")
+                    await sort_chapter_channels_alphabetically(guild)
                     
                     # Sort categories once after all structures are created
                     print("📋 Organizing all building categories alphabetically...")
@@ -2537,7 +2764,7 @@ async def organize_roles_command(ctx):
             
             embed.add_field(
                 name="📋 Priority Order (Bottom to Top)",
-                value="1. Other roles (alphabetical)\n2. **:(**\n3. **Volunteer**\n4. **Lead Event Supervisor**\n5. **Social Media**\n6. **Photographer**\n7. **Arbitrations**\n8. **Slacker**\n9. **Bot Role** (highest)",
+                value="1. Other roles (alphabetical)\n2. **:(**\n3. **Chapter Roles** (green, alphabetical)\n4. **Volunteer**\n5. **Lead Event Supervisor**\n6. **Social Media**\n7. **Photographer**\n8. **Arbitrations**\n9. **Awards**\n10. **Slacker**\n11. **Bot Role** (highest)",
                 inline=False
             )
             
@@ -2620,6 +2847,7 @@ class EmailLoginModal(discord.ui.Modal):
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         
+        global chapter_role_names
         email = self.email_input.value.strip().lower()
         user = interaction.user
         
@@ -2705,6 +2933,8 @@ class EmailLoginModal(discord.ui.Modal):
                     user_name = str(user_row.get("Name", "")).strip()
                     first_event = str(user_row.get("First Event", "")).strip()
                     master_role = str(user_row.get("Master Role", "")).strip()
+                    secondary_role = str(user_row.get("Secondary Role", "")).strip()
+                    chapter = str(user_row.get("Chapter", "")).strip()
                     building = str(user_row.get("Building 1", "")).strip()
                     room = str(user_row.get("Room 1", "")).strip()
 
@@ -2724,7 +2954,7 @@ class EmailLoginModal(discord.ui.Modal):
                     
                     elif(user_name == "Nikki Cheung"):
                         embed = discord.Embed(
-                            title="🥑 Peel the avocadoooo... GUACAMOLE, GUAC-GUACOMOLE 🥑",
+                            title="🥑 Is it green? 🥑",
                             description=f"Your Discord account has been linked to your email and roles have been assigned.",
                             color=discord.Color.green()
                         )
@@ -2772,6 +3002,18 @@ class EmailLoginModal(discord.ui.Modal):
                         roles_assigned.append(master_role)
                     if first_event != master_role:
                         roles_assigned.append(first_event)
+                    if secondary_role and secondary_role not in roles_assigned:
+                        roles_assigned.append(secondary_role)
+                    
+                    # Add chapter role
+                    if chapter and chapter.lower() not in ["n/a", "na", ""]:
+                        roles_assigned.append(chapter)
+                        # Add to chapter role names set
+                        chapter_role_names.add(chapter)
+                    else:
+                        roles_assigned.append("Unaffiliated")
+                        # Unaffiliated is also a chapter role
+                        chapter_role_names.add("Unaffiliated")
                     
                     if roles_assigned:
                         embed.add_field(
