@@ -1083,11 +1083,13 @@ async def post_welcome_instructions(welcome_channel):
     """Post welcome instructions and login information to the welcome channel"""
     try:
         # Check if there are already messages in the channel
-        async for message in welcome_channel.history(limit=1):
-            # If there are messages, check if any are from the bot
-            if message.author == bot.user and "Welcome to" in message.content:
-                print(f"✅ Welcome instructions already posted in #{welcome_channel.name}")
-                return
+        async for message in welcome_channel.history(limit=10):
+            # If there are messages, check if any are from the bot with the welcome embed
+            if message.author == bot.user and message.embeds:
+                for embed in message.embeds:
+                    if embed.title and "Welcome to the Science Olympiad Server" in embed.title:
+                        print(f"✅ Welcome instructions already posted in #{welcome_channel.name}")
+                        return
         
         # Create welcome embed
         embed = discord.Embed(
@@ -1150,7 +1152,15 @@ async def post_welcome_instructions(welcome_channel):
 
 async def post_welcome_tldr(welcome_channel):
     """Post welcome instructions and login information to the welcome channel"""
-    try:        
+    try:
+        # Check if TLDR message already exists
+        async for message in welcome_channel.history(limit=10):
+            if message.author == bot.user and message.embeds:
+                for embed in message.embeds:
+                    if embed.title and "TLDR: TYPE" in embed.title:
+                        print(f"✅ Welcome TLDR already posted in #{welcome_channel.name}")
+                        return
+        
         # Create welcome embed
         embed = discord.Embed(
             title="TLDR: TYPE `/login` TO GET STARTED",
@@ -2141,7 +2151,7 @@ async def on_thread_create(thread):
                 
                 embed = discord.Embed(
                     title="New Help Ticket",
-                    description=f"**Ticket:** {thread.mention}\n**Creator:** {ticket_creator.mention}\n**Event:** {event}\n**Location:** {location}\n**Zone:** {zone}",
+                    description=f"**Ticket:** {thread.mention}\n**Creator:** {ticket_creator.mention}\n**Event:** {event}\n**Location:** {location}",
                     color=discord.Color.yellow()
                 )
                 embed.add_field(
@@ -4040,7 +4050,7 @@ async def send_ticket_repings(thread, ticket_info):
         if ping_count < 3:
             embed = discord.Embed(
                 title=f"Still Need Help!",
-                description=f"**Event:** {ticket_info['event']}\n**Location:** {location}\n**Zone:** {ticket_info['zone']}",
+                description=f"**Event:** {ticket_info['event']}\n**Location:** {location}",
                 color=discord.Color.orange()
             )
             embed.add_field(
@@ -4051,7 +4061,7 @@ async def send_ticket_repings(thread, ticket_info):
         else:
             embed = discord.Embed(
                 title=f"Final Call!",
-                description=f"**Event:** {ticket_info['event']}\n**Location:** {location}\n**Zone:** {ticket_info['zone']}",
+                description=f"**Event:** {ticket_info['event']}\n**Location:** {location}",
                 color=discord.Color.red()
             )
             embed.add_field(
