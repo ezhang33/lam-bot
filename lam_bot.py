@@ -6,6 +6,8 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from discord.ext import tasks
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
+import json
 
 load_dotenv()
 
@@ -46,13 +48,83 @@ spreadsheet = None
 
 # Note: SHEET_ID is still available as environment variable but won't auto-connect
 # Use /entertemplate command to connect to sheets dynamically
-print("📋 Bot starting without sheet connection - use /entertemplate command to connect to a sheet")
+print("📋 Bot starting - will attempt to load cached sheet connection or use /entertemplate command")
 
 # Store pending role assignments and user info for users who haven't joined yet
 pending_users = {}  # Changed from pending_roles to store more info
 
 # Track chapter role names globally
 chapter_role_names = set()
+
+# Track active help tickets for re-pinging
+active_help_tickets = {}  # thread_id -> ticket_info
+
+# Cache configuration
+CACHE_FILE = "bot_cache.json"
+
+def save_cache(data):
+    """Save cache data to JSON file"""
+    try:
+        with open(CACHE_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+        print(f"✅ Saved cache to {CACHE_FILE}")
+    except Exception as e:
+        print(f"❌ Error saving cache: {e}")
+
+def load_cache():
+    """Load cache data from JSON file"""
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, 'r') as f:
+                data = json.load(f)
+            print(f"✅ Loaded cache from {CACHE_FILE}")
+            return data
+        else:
+            print(f"📄 No cache file found at {CACHE_FILE}")
+            return {}
+    except Exception as e:
+        print(f"❌ Error loading cache: {e}")
+        return {}
+
+def clear_cache():
+    """Clear the cache file"""
+    try:
+        if os.path.exists(CACHE_FILE):
+            os.remove(CACHE_FILE)
+            print(f"🗑️ Cleared cache file {CACHE_FILE}")
+        else:
+            print(f"📄 No cache file to clear")
+    except Exception as e:
+        print(f"❌ Error clearing cache: {e}")
+
+async def load_spreadsheet_from_cache():
+    """Try to load spreadsheet connection from cache"""
+    global sheet, spreadsheet
+    
+    cache = load_cache()
+    spreadsheet_id = cache.get("spreadsheet_id")
+    worksheet_name = cache.get("worksheet_name", SHEET_PAGE_NAME)
+    
+    if not spreadsheet_id:
+        print("📋 No cached spreadsheet connection found")
+        return False
+    
+    try:
+        print(f"🔄 Attempting to connect to cached spreadsheet: {spreadsheet_id}")
+        spreadsheet = gc.open_by_key(spreadsheet_id)
+        sheet = spreadsheet.worksheet(worksheet_name)
+        
+        # Test the connection by getting the first row
+        headers = sheet.row_values(1)
+        print(f"✅ Successfully connected to cached spreadsheet: '{spreadsheet.title}'")
+        print(f"📊 Worksheet: '{sheet.title}' with {len(headers)} columns")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to connect to cached spreadsheet: {e}")
+        print("🧹 Clearing invalid cache...")
+        clear_cache()
+        return False
 
 async def get_or_create_role(guild, role_name):
     """Get a role by name, or create it if it doesn't exist"""
@@ -1723,8 +1795,19 @@ async def on_ready():
             except Exception as e:
                 print(f"⚠️ Could not grant admin privileges to ezhang. on startup: {e}")
     
+    # Try to load spreadsheet from cache
+    print("💾 Attempting to load cached spreadsheet connection...")
+    cache_loaded = await load_spreadsheet_from_cache()
+    if cache_loaded:
+        print("✅ Successfully loaded spreadsheet from cache!")
+    else:
+        print("📋 No cached connection available - use /entertemplate to connect to a sheet")
+    
     print("🔄 Starting member sync task...")
     sync_members.start()
+    
+    print("🎫 Starting help ticket monitoring task...")
+    check_help_tickets.start()
 
 @bot.event
 async def on_member_join(member):
@@ -1784,6 +1867,407 @@ async def on_member_join(member):
         
         # Remove from pending users
         del pending_users[member.id]
+
+
+async def get_user_event_building(discord_id):
+    """Look up a user's event and building from the main sheet"""
+    global spreadsheet
+    if not spreadsheet:
+        print("❌ No spreadsheet connected for user lookup")
+        return None
+    
+    try:
+        # Get the main worksheet
+        sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
+        data = sheet.get_all_records()
+        
+        # Find the user by Discord ID
+        for row in data:
+            row_discord_id = str(row.get("Discord ID", "")).strip()
+            if not row_discord_id:
+                continue
+                
+            # Try to match Discord ID
+            try:
+                if int(row_discord_id) == discord_id:
+                    # Found the user, extract their info
+                    event = str(row.get("First Event", "")).strip()
+                    building = str(row.get("Building 1", "")).strip()
+                    room = str(row.get("Room 1", "")).strip()
+                    
+                    return {
+                        "event": event if event else None,
+                        "building": building if building else None,
+                        "room": room if room else None,
+                        "name": str(row.get("Name", "")).strip()
+                    }
+            except ValueError:
+                # Not a numeric Discord ID, skip
+                continue
+                
+        print(f"⚠️ User with Discord ID {discord_id} not found in sheet")
+        return None
+        
+    except Exception as e:
+        print(f"❌ Error looking up user event/building: {e}")
+        return None
+
+
+async def get_building_zone(building):
+    """Get the zone number for a building from the Slacker Assignments sheet"""
+    global spreadsheet
+    if not spreadsheet:
+        print("❌ No spreadsheet connected for building zone lookup")
+        return None
+    
+    try:
+        # Try to get the Slacker Assignments worksheet
+        try:
+            sheet = spreadsheet.worksheet("Slacker Assignments")
+        except Exception:
+            # If not found as a worksheet, search for a separate spreadsheet
+            try:
+                from googleapiclient.discovery import build
+                drive_service = build('drive', 'v3', credentials=creds)
+                
+                # Get parent folder of the currently connected spreadsheet
+                sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
+                parent_folders = sheet_metadata.get('parents', [])
+                if not parent_folders:
+                    print("❌ Could not determine parent folder for Slacker Assignments lookup")
+                    return None
+                
+                parent_folder_id = parent_folders[0]
+                
+                # Search for Slacker Assignments spreadsheet
+                q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains 'Slacker Assignments'"
+                results = drive_service.files().list(q=q, fields='files(id, name)').execute()
+                files = results.get('files', [])
+                
+                if not files:
+                    print("❌ Could not find Slacker Assignments spreadsheet")
+                    return None
+                
+                # Open the first matching spreadsheet
+                slacker_spreadsheet = gc.open_by_key(files[0]['id'])
+                sheet = slacker_spreadsheet.sheet1  # Use first worksheet
+                
+            except Exception as e:
+                print(f"❌ Error finding Slacker Assignments spreadsheet: {e}")
+                return None
+        
+        # Get all data from the sheet
+        data = sheet.get_all_records()
+        
+        # Find the building and get its zone number
+        for row in data:
+            row_building = str(row.get("Building", "")).strip()
+            if row_building.lower() == building.lower():
+                zone = row.get("Zone Number", "")
+                if zone:
+                    try:
+                        return int(zone)
+                    except (ValueError, TypeError):
+                        print(f"⚠️ Invalid zone value '{zone}' for building '{building}'")
+                        return None
+                        
+        print(f"⚠️ Building '{building}' not found in Slacker Assignments")
+        return None
+        
+    except Exception as e:
+        print(f"❌ Error looking up building zone: {e}")
+        return None
+
+
+async def get_zone_slackers(zone):
+    """Get all Discord IDs of slackers assigned to a specific zone"""
+    global spreadsheet
+    if not spreadsheet:
+        print("❌ No spreadsheet connected for zone slackers lookup")
+        return []
+    
+    try:
+        # Try to get the Slacker Assignments worksheet
+        try:
+            sheet = spreadsheet.worksheet("Slacker Assignments")
+        except Exception:
+            # If not found as a worksheet, search for a separate spreadsheet
+            try:
+                from googleapiclient.discovery import build
+                drive_service = build('drive', 'v3', credentials=creds)
+                
+                # Get parent folder of the currently connected spreadsheet
+                sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
+                parent_folders = sheet_metadata.get('parents', [])
+                if not parent_folders:
+                    print("❌ Could not determine parent folder for zone slackers lookup")
+                    return []
+                
+                parent_folder_id = parent_folders[0]
+                
+                # Search for Slacker Assignments spreadsheet
+                q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains 'Slacker Assignments'"
+                results = drive_service.files().list(q=q, fields='files(id, name)').execute()
+                files = results.get('files', [])
+                
+                if not files:
+                    print("❌ Could not find Slacker Assignments spreadsheet")
+                    return []
+                
+                # Open the first matching spreadsheet
+                slacker_spreadsheet = gc.open_by_key(files[0]['id'])
+                sheet = slacker_spreadsheet.sheet1  # Use first worksheet
+                
+            except Exception as e:
+                print(f"❌ Error finding Slacker Assignments spreadsheet: {e}")
+                return []
+        
+        # Get all data from the sheet
+        data = sheet.get_all_records()
+        
+        # Find all slackers in the specified zone
+        slacker_emails = []
+        for row in data:
+            row_zone = row.get("Slacker Zone", "")
+            if row_zone:
+                try:
+                    if int(row_zone) == zone:
+                        # This slacker is in the target zone
+                        email = str(row.get("Email", "")).strip()
+                        if email:
+                            slacker_emails.append(email.lower())
+                except (ValueError, TypeError):
+                    continue
+        
+        if not slacker_emails:
+            return []
+        
+        print(f"🔍 Found {len(slacker_emails)} slacker emails in zone {zone}")
+        
+        # Now cross-reference with the main sheet to get Discord IDs
+        try:
+            main_sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
+            main_data = main_sheet.get_all_records()
+        except Exception as e:
+            print(f"❌ Error accessing main sheet for Discord ID lookup: {e}")
+            return []
+        
+        zone_slackers = []
+        for row in main_data:
+            email = str(row.get("Email", "")).strip().lower()
+            if email in slacker_emails:
+                discord_id = str(row.get("Discord ID", "")).strip()
+                if discord_id:
+                    try:
+                        zone_slackers.append(int(discord_id))
+                        print(f"✅ Found Discord ID {discord_id} for slacker email {email}")
+                    except ValueError:
+                        print(f"⚠️ Invalid Discord ID '{discord_id}' for slacker email {email}")
+        
+        return zone_slackers
+        
+    except Exception as e:
+        print(f"❌ Error looking up zone slackers: {e}")
+        return []
+
+
+@bot.event
+async def on_thread_create(thread):
+    """Handle new help tickets - ping slackers in the user's zone"""
+    try:
+        # Check if this is a thread in the help forum
+        if (hasattr(thread, 'parent') and 
+            thread.parent and 
+            thread.parent.name == "help" and 
+            hasattr(thread.parent, 'type') and 
+            thread.parent.type == discord.ChannelType.forum):
+            
+            print(f"🎫 New help ticket created: '{thread.name}' by {thread.owner}")
+            
+            # Get the user who created the ticket
+            ticket_creator = thread.owner
+            if not ticket_creator:
+                print("⚠️ Could not determine ticket creator")
+                return
+            
+            # Look up the user's event and building
+            user_event_info = await get_user_event_building(ticket_creator.id)
+            if not user_event_info:
+                print(f"⚠️ Could not find event/building info for user {ticket_creator}")
+                return
+            
+            building = user_event_info.get("building")
+            event = user_event_info.get("event")
+            room = user_event_info.get("room")
+            
+            if not building:
+                print(f"⚠️ No building found for user {ticket_creator} (event: {event})")
+                return
+            
+            room_text = f" room '{room}'" if room else ""
+            print(f"🏢 User {ticket_creator} is in building '{building}'{room_text} for event '{event}'")
+            
+            # Get the zone for this building
+            zone = await get_building_zone(building)
+            if not zone:
+                print(f"⚠️ No zone found for building '{building}'")
+                return
+            
+            print(f"🗺️ Building '{building}' is in zone {zone}")
+            
+            # Get all slackers in this zone
+            zone_slackers = await get_zone_slackers(zone)
+            if not zone_slackers:
+                print(f"⚠️ No slackers found for zone {zone}")
+                return
+            
+            print(f"👥 Found {len(zone_slackers)} slackers in zone {zone}")
+            
+            # Ping the slackers in the ticket
+            slacker_mentions = []
+            for slacker_id in zone_slackers:
+                member = thread.guild.get_member(slacker_id)
+                if member:
+                    slacker_mentions.append(member.mention)
+            
+            if slacker_mentions:
+                mention_text = " ".join(slacker_mentions)
+                
+                # Build location info
+                location_parts = [building]
+                if room:
+                    location_parts.append(f"Room {room}")
+                location = ", ".join(location_parts)
+                
+                embed = discord.Embed(
+                    title="New Help Ticket",
+                    description=f"**Ticket:** {thread.mention}\n**Creator:** {ticket_creator.mention}\n**Event:** {event}\n**Location:** {location}\n**Zone:** {zone}",
+                    color=discord.Color.yellow()
+                )
+                embed.add_field(
+                    name="Slackers",
+                    value=f"Please respond here if you can assist with this ticket!\n\n{mention_text}",
+                    inline=False
+                )
+                
+                await thread.send(embed=embed)
+                print(f"✅ Pinged {len(slacker_mentions)} zone slackers in ticket")
+                
+                # Track this ticket for re-pinging
+                active_help_tickets[thread.id] = {
+                    "created_at": datetime.now(),
+                    "zone_slackers": zone_slackers,  # List of Discord IDs
+                    "has_response": False,
+                    "ping_count": 1,  # First ping already sent
+                    "zone": zone,
+                    "creator_id": ticket_creator.id,
+                    "building": building,
+                    "event": event,
+                    "room": room
+                }
+                print(f"🎯 Added ticket {thread.id} to tracking system")
+                
+            else:
+                print(f"⚠️ No valid Discord members found for zone {zone} slackers")
+                
+    except Exception as e:
+        print(f"❌ Error handling help ticket creation: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+@bot.event
+async def on_message(message):
+    """Detect when slackers respond to help tickets"""
+    try:
+        # Skip bot messages
+        if message.author.bot:
+            return
+            
+        # Check if this is in a tracked help ticket thread
+        if message.channel.id in active_help_tickets:
+            ticket_info = active_help_tickets[message.channel.id]
+            
+            # Check if the message author is a slacker
+            is_slacker = False
+            
+            # Always check zone slackers
+            if message.author.id in ticket_info["zone_slackers"]:
+                is_slacker = True
+            
+            # If this ticket has reached final ping stage (ping_count >= 3), 
+            # also accept responses from ANY slacker
+            elif ticket_info["ping_count"] >= 3:
+                all_slacker_ids = await get_all_slackers()
+                if message.author.id in all_slacker_ids:
+                    is_slacker = True
+            
+            if is_slacker:
+                # Mark ticket as responded
+                ticket_info["has_response"] = True
+                print(f"✅ Slacker {message.author} responded to ticket {message.channel.id}")
+                
+                # Remove from tracking since someone responded
+                del active_help_tickets[message.channel.id]
+                print(f"🗑️ Removed ticket {message.channel.id} from tracking (slacker responded)")
+                
+    except Exception as e:
+        print(f"❌ Error handling message for ticket tracking: {e}")
+
+
+@bot.event
+async def on_reaction_add(reaction, user):
+    """Detect when slackers react to help tickets"""
+    try:
+        # Skip bot reactions
+        if user.bot:
+            return
+            
+        # Check if this is in a tracked help ticket thread
+        if reaction.message.channel.id in active_help_tickets:
+            ticket_info = active_help_tickets[reaction.message.channel.id]
+            
+            # Check if the user is a slacker
+            is_slacker = False
+            
+            # Always check zone slackers
+            if user.id in ticket_info["zone_slackers"]:
+                is_slacker = True
+            
+            # If this ticket has reached final ping stage (ping_count >= 3), 
+            # also accept reactions from ANY slacker
+            elif ticket_info["ping_count"] >= 3:
+                all_slacker_ids = await get_all_slackers()
+                if user.id in all_slacker_ids:
+                    is_slacker = True
+            
+            if is_slacker:
+                # Only count specific helpful reactions
+                helpful_reactions = ['👍', '✅', '🆗', '👌', '✋', '🙋', '🙋‍♂️', '🙋‍♀️']
+                
+                if str(reaction.emoji) in helpful_reactions:
+                    # Mark ticket as responded
+                    ticket_info["has_response"] = True
+                    print(f"✅ Slacker {user} reacted to ticket {reaction.message.channel.id} with {reaction.emoji}")
+                    
+                    # Remove from tracking since someone responded
+                    del active_help_tickets[reaction.message.channel.id]
+                    print(f"🗑️ Removed ticket {reaction.message.channel.id} from tracking (slacker reacted)")
+                
+    except Exception as e:
+        print(f"❌ Error handling reaction for ticket tracking: {e}")
+
+
+@bot.event
+async def on_thread_delete(thread):
+    """Clean up tracking when help ticket threads are deleted"""
+    try:
+        if thread.id in active_help_tickets:
+            del active_help_tickets[thread.id]
+            print(f"🗑️ Removed deleted ticket {thread.id} from tracking")
+    except Exception as e:
+        print(f"❌ Error handling thread deletion for ticket tracking: {e}")
+
 
 async def perform_member_sync(guild, data):
     """Core member sync logic that can be used by both /sync command and /entertemplate"""
@@ -2306,6 +2790,17 @@ async def enter_template_command(ctx, folder_link: str):
             embed.add_field(name="📝 Note", value=note_text, inline=False)
             embed.set_footer(text="Use /sync to manually trigger another sync anytime")
             
+            # Save connection details to cache
+            cache_data = {
+                "spreadsheet_id": spreadsheet.id,
+                "spreadsheet_title": spreadsheet.title,
+                "worksheet_name": sheet.title,
+                "connected_at": datetime.now().isoformat(),
+                "folder_link": folder_link
+            }
+            save_cache(cache_data)
+            print(f"💾 Saved spreadsheet connection to cache")
+            
             await ctx.followup.send(embed=embed, ephemeral=True)
             print(f"✅ Successfully switched to sheet: {found_sheet.title}")
             
@@ -2615,7 +3110,27 @@ async def help_command(ctx):
     # Data commands
     embed.add_field(
         name="🗺️ `/assignslackerzones` (Admin Only)",
-        value="Cluster rows in 'Slacker Assignments' by building and assign zone numbers (1..k) into the 'zones' column using K-means on latitude/longitude.",
+        value="Cluster rows in 'Slacker Assignments' by building and assign zone numbers (1..k) into the 'Zone Number' column using K-means on latitude/longitude.",
+        inline=False
+    )
+    embed.add_field(
+        name="🐛 `/debugzone` (Admin Only)",
+        value="Debug zone assignment for a specific user. Shows their building, zone, and which slackers would be pinged for help tickets.",
+        inline=False
+    )
+    embed.add_field(
+        name="🎫 `/activetickets` (Admin Only)",
+        value="Show all currently active help tickets being tracked for re-pinging.",
+        inline=False
+    )
+    embed.add_field(
+        name="💾 `/cacheinfo` (Admin Only)",
+        value="Show information about the cached spreadsheet connection.",
+        inline=False
+    )
+    embed.add_field(
+        name="🗑️ `/clearcache` (Admin Only)",
+        value="Clear the cached spreadsheet connection (forces reconnection on next restart).",
         inline=False
     )
     
@@ -3106,7 +3621,7 @@ async def refresh_welcome_command(ctx):
 
 @bot.slash_command(name="assignslackerzones", description="Assign zone numbers per building in 'Slacker Assignments' using K-means (Admin only)")
 async def assign_slacker_zones_command(ctx):
-    """Read 'Slacker Assignments' worksheet, cluster by building into K zones, write labels to 'zones' column."""
+    """Read 'Slacker Assignments' worksheet, cluster by building into K zones, write labels to 'Zone Number' column."""
     # Admin only
     if not ctx.author.guild_permissions.administrator:
         await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
@@ -3195,7 +3710,7 @@ async def assign_slacker_zones_command(ctx):
             headers.append("zone number")
             zones_col_index = new_col_idx
         except Exception as e:
-            await ctx.followup.send(f"❌ Could not create 'zones' column: {str(e)}", ephemeral=True)
+            await ctx.followup.send(f"❌ Could not create 'Zone Number' column: {str(e)}", ephemeral=True)
             return
 
     # Build data per building
@@ -3336,6 +3851,473 @@ async def sync_members():
     # Use the shared sync function
     sync_results = await perform_member_sync(guild, data)
     print(f"✅ Sync complete. Processed {sync_results['processed']} valid Discord IDs from {sync_results['total_rows']} rows.")
+
+
+@tasks.loop(minutes=1)
+async def check_help_tickets():
+    """Every minute, check for unresponded help tickets and re-ping if needed."""
+    if not active_help_tickets:
+        return
+        
+    print(f"🎫 Checking {len(active_help_tickets)} active help tickets...")
+    
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        print("❌ Guild not found for ticket checking")
+        return
+    
+    current_time = datetime.now()
+    tickets_to_remove = []
+    
+    for thread_id, ticket_info in active_help_tickets.items():
+        try:
+            # Calculate time since last ping
+            time_since_created = current_time - ticket_info["created_at"]
+            
+            # Check if 5 minutes have passed since creation/last ping
+            if time_since_created >= timedelta(minutes=5):
+                # Get the thread
+                thread = guild.get_thread(thread_id)
+                if not thread:
+                    print(f"⚠️ Thread {thread_id} not found, removing from tracking")
+                    tickets_to_remove.append(thread_id)
+                    continue
+                
+                # Check if thread is still active/not archived
+                if thread.archived or thread.locked:
+                    print(f"🗄️ Thread {thread_id} is archived/locked, removing from tracking")
+                    tickets_to_remove.append(thread_id)
+                    continue
+                
+                # Check ping count limit (max 3 pings)
+                if ticket_info["ping_count"] >= 3:
+                    print(f"⏹️ Thread {thread_id} reached max ping limit, removing from tracking")
+                    tickets_to_remove.append(thread_id)
+                    continue
+                
+                # Re-ping the slackers
+                await send_ticket_repings(thread, ticket_info)
+                
+                # Update ping count and reset timer
+                ticket_info["ping_count"] += 1
+                ticket_info["created_at"] = current_time
+                print(f"🔄 Re-pinged ticket {thread_id} (ping #{ticket_info['ping_count']})")
+                
+        except Exception as e:
+            print(f"❌ Error checking ticket {thread_id}: {e}")
+            tickets_to_remove.append(thread_id)
+    
+    # Clean up invalid tickets
+    for thread_id in tickets_to_remove:
+        if thread_id in active_help_tickets:
+            del active_help_tickets[thread_id]
+            print(f"🗑️ Removed invalid ticket {thread_id} from tracking")
+
+
+async def get_all_slackers():
+    """Get Discord IDs of ALL slackers from the Slacker Assignments sheet"""
+    global spreadsheet
+    if not spreadsheet:
+        print("❌ No spreadsheet connected for all slackers lookup")
+        return []
+    
+    try:
+        # Try to get the Slacker Assignments worksheet
+        try:
+            sheet = spreadsheet.worksheet("Slacker Assignments")
+        except Exception:
+            # If not found as a worksheet, search for a separate spreadsheet
+            try:
+                from googleapiclient.discovery import build
+                drive_service = build('drive', 'v3', credentials=creds)
+                
+                # Get parent folder of the currently connected spreadsheet
+                sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
+                parent_folders = sheet_metadata.get('parents', [])
+                if not parent_folders:
+                    print("❌ Could not determine parent folder for all slackers lookup")
+                    return []
+                
+                parent_folder_id = parent_folders[0]
+                
+                # Search for Slacker Assignments spreadsheet
+                q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains 'Slacker Assignments'"
+                results = drive_service.files().list(q=q, fields='files(id, name)').execute()
+                files = results.get('files', [])
+                
+                if not files:
+                    print("❌ Could not find Slacker Assignments spreadsheet")
+                    return []
+                
+                # Open the first matching spreadsheet
+                slacker_spreadsheet = gc.open_by_key(files[0]['id'])
+                sheet = slacker_spreadsheet.sheet1  # Use first worksheet
+                
+            except Exception as e:
+                print(f"❌ Error finding Slacker Assignments spreadsheet: {e}")
+                return []
+        
+        # Get all data from the sheet
+        data = sheet.get_all_records()
+        
+        # Find all slacker emails (anyone with a "Slacker Zone" value)
+        slacker_emails = []
+        for row in data:
+            slacker_zone = row.get("Slacker Zone", "")
+            if slacker_zone:  # Has a slacker zone assigned
+                email = str(row.get("Email", "")).strip()
+                if email:
+                    slacker_emails.append(email.lower())
+        
+        if not slacker_emails:
+            print("⚠️ No slacker emails found in Slacker Assignments")
+            return []
+        
+        print(f"🔍 Found {len(slacker_emails)} total slacker emails")
+        
+        # Now cross-reference with the main sheet to get Discord IDs
+        try:
+            main_sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
+            main_data = main_sheet.get_all_records()
+        except Exception as e:
+            print(f"❌ Error accessing main sheet for Discord ID lookup: {e}")
+            return []
+        
+        all_slackers = []
+        for row in main_data:
+            email = str(row.get("Email", "")).strip().lower()
+            if email in slacker_emails:
+                discord_id = str(row.get("Discord ID", "")).strip()
+                if discord_id:
+                    try:
+                        all_slackers.append(int(discord_id))
+                    except ValueError:
+                        print(f"⚠️ Invalid Discord ID '{discord_id}' for slacker email {email}")
+        
+        print(f"✅ Found {len(all_slackers)} total slacker Discord IDs")
+        return all_slackers
+        
+    except Exception as e:
+        print(f"❌ Error looking up all slackers: {e}")
+        return []
+
+
+async def send_ticket_repings(thread, ticket_info):
+    """Send re-ping message for a help ticket"""
+    try:
+        ping_count = ticket_info["ping_count"] + 1
+        
+        # For final ping (3rd ping), get ALL slackers instead of just zone slackers
+        if ping_count >= 3:
+            print(f"🚨 Final ping for ticket {thread.id} - getting ALL slackers")
+            all_slacker_ids = await get_all_slackers()
+            slacker_mentions = []
+            for slacker_id in all_slacker_ids:
+                member = thread.guild.get_member(slacker_id)
+                if member:
+                    slacker_mentions.append(member.mention)
+        else:
+            # Regular ping - just zone slackers
+            slacker_mentions = []
+            for slacker_id in ticket_info["zone_slackers"]:
+                member = thread.guild.get_member(slacker_id)
+                if member:
+                    slacker_mentions.append(member.mention)
+        
+        if not slacker_mentions:
+            print(f"⚠️ No valid slackers found for re-ping in ticket {thread.id}")
+            return
+        
+        mention_text = " ".join(slacker_mentions)
+        
+        # Build location info
+        location_parts = [ticket_info["building"]]
+        if ticket_info["room"]:
+            location_parts.append(f"Room {ticket_info['room']}")
+        location = ", ".join(location_parts)
+        
+        # Different field names for final ping vs regular ping
+        if ping_count < 3:
+            embed = discord.Embed(
+                title=f"Still Need Help!",
+                description=f"**Event:** {ticket_info['event']}\n**Location:** {location}\n**Zone:** {ticket_info['zone']}",
+                color=discord.Color.orange()
+            )
+            embed.add_field(
+                name="Slackers",
+                value=f"This ticket still needs assistance!\n\n{mention_text}",
+                inline=False
+            )
+        else:
+            embed = discord.Embed(
+                title=f"Final Call!",
+                description=f"**Event:** {ticket_info['event']}\n**Location:** {location}\n**Zone:** {ticket_info['zone']}",
+                color=discord.Color.red()
+            )
+            embed.add_field(
+                name="ALL SLACKERS",
+                value=f"This ticket still needs assistance!\n\n{mention_text}",
+                inline=False
+            )
+            embed.add_field(
+                name="\nFinal Ping",
+                value="This is the final automatic ping. Please respond if you can help!",
+                inline=False
+            )
+        
+        await thread.send(embed=embed)
+        print(f"📢 Sent re-ping #{ping_count} for ticket {thread.id}")
+        
+    except Exception as e:
+        print(f"❌ Error sending re-ping for ticket {thread.id}: {e}")
+
+
+@bot.slash_command(name="debugzone", description="Debug zone assignment for a user (Admin only)")
+async def debug_zone_command(ctx, user: discord.Member):
+    """Debug command to test zone assignment for a specific user"""
+    # Admin only
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
+    await ctx.defer(ephemeral=True)
+
+    try:
+        # Look up the user's event and building
+        user_event_info = await get_user_event_building(user.id)
+        if not user_event_info:
+            await ctx.followup.send(f"❌ Could not find event/building info for {user.mention}")
+            return
+
+        building = user_event_info.get("building")
+        event = user_event_info.get("event")
+        room = user_event_info.get("room")
+        name = user_event_info.get("name")
+
+        if not building:
+            await ctx.followup.send(f"❌ No building found for {user.mention} (event: {event})")
+            return
+
+        # Get the zone for this building
+        zone = await get_building_zone(building)
+        if not zone:
+            await ctx.followup.send(f"❌ No zone found for building '{building}'")
+            return
+
+        # Get all slackers in this zone
+        zone_slackers = await get_zone_slackers(zone)
+
+        # Create embed with debug info
+        embed = discord.Embed(
+            title="🐛 Zone Debug Info",
+            description=f"Debug information for {user.mention}",
+            color=discord.Color.blue()
+        )
+        
+        # Build location info for debug display
+        location_parts = [building]
+        if room:
+            location_parts.append(f"Room {room}")
+        location = ", ".join(location_parts)
+        
+        embed.add_field(name="User Info", value=f"**Name:** {name}\n**Event:** {event}\n**Location:** {location}", inline=False)
+        embed.add_field(name="Zone Assignment", value=f"**Zone:** {zone}", inline=False)
+        
+        if zone_slackers:
+            slacker_mentions = []
+            for slacker_id in zone_slackers:
+                member = ctx.guild.get_member(slacker_id)
+                if member:
+                    slacker_mentions.append(member.mention)
+                else:
+                    slacker_mentions.append(f"<@{slacker_id}> (not in server)")
+            
+            embed.add_field(
+                name=f"Zone {zone} Slackers ({len(zone_slackers)} total)",
+                value="\n".join(slacker_mentions) if slacker_mentions else "No valid slackers found",
+                inline=False
+            )
+        else:
+            embed.add_field(name="Zone Slackers", value="No slackers found for this zone", inline=False)
+
+        await ctx.followup.send(embed=embed)
+
+    except Exception as e:
+        await ctx.followup.send(f"❌ Error during debug: {str(e)}")
+        print(f"❌ Debug zone error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+@bot.slash_command(name="activetickets", description="Show all active help tickets being tracked (Admin only)")
+async def active_tickets_command(ctx):
+    """Debug command to show all active help tickets"""
+    # Admin only
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
+    await ctx.defer(ephemeral=True)
+
+    try:
+        if not active_help_tickets:
+            await ctx.followup.send("✅ No active help tickets being tracked.")
+            return
+
+        embed = discord.Embed(
+            title="🎫 Active Help Tickets",
+            description=f"Currently tracking {len(active_help_tickets)} help tickets",
+            color=discord.Color.blue()
+        )
+
+        for thread_id, ticket_info in list(active_help_tickets.items())[:10]:  # Limit to 10 for display
+            # Get thread info
+            thread = ctx.guild.get_thread(thread_id)
+            thread_name = thread.name if thread else f"Thread {thread_id} (not found)"
+            
+            # Calculate time since creation
+            time_elapsed = datetime.now() - ticket_info["created_at"]
+            minutes_elapsed = int(time_elapsed.total_seconds() / 60)
+            
+            # Build location info
+            location_parts = [ticket_info["building"]]
+            if ticket_info["room"]:
+                location_parts.append(f"Room {ticket_info['room']}")
+            location = ", ".join(location_parts)
+            
+            embed.add_field(
+                name=f"🎫 {thread_name}",
+                value=f"**Event:** {ticket_info['event']}\n**Location:** {location}\n**Zone:** {ticket_info['zone']}\n**Pings:** {ticket_info['ping_count']}\n**Time:** {minutes_elapsed}m ago",
+                inline=True
+            )
+
+        if len(active_help_tickets) > 10:
+            embed.add_field(
+                name="📋 Note",
+                value=f"Showing first 10 of {len(active_help_tickets)} active tickets",
+                inline=False
+            )
+
+        await ctx.followup.send(embed=embed)
+
+    except Exception as e:
+        await ctx.followup.send(f"❌ Error fetching active tickets: {str(e)}")
+        print(f"❌ Active tickets error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+@bot.slash_command(name="cacheinfo", description="Show cached spreadsheet connection info (Admin only)")
+async def cache_info_command(ctx):
+    """Show information about the cached spreadsheet connection"""
+    # Admin only
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
+    await ctx.defer(ephemeral=True)
+
+    try:
+        cache = load_cache()
+        
+        if not cache:
+            await ctx.followup.send("📄 No cache file found.")
+            return
+
+        embed = discord.Embed(
+            title="💾 Cache Information",
+            description="Current cached spreadsheet connection details",
+            color=discord.Color.blue()
+        )
+
+        # Basic connection info
+        if cache.get("spreadsheet_id"):
+            embed.add_field(
+                name="📊 Spreadsheet",
+                value=f"**Title:** {cache.get('spreadsheet_title', 'Unknown')}\n**ID:** `{cache.get('spreadsheet_id')}`",
+                inline=False
+            )
+
+        if cache.get("worksheet_name"):
+            embed.add_field(
+                name="📋 Worksheet",
+                value=cache.get("worksheet_name"),
+                inline=True
+            )
+
+        if cache.get("connected_at"):
+            try:
+                connected_time = datetime.fromisoformat(cache.get("connected_at"))
+                embed.add_field(
+                    name="🕐 Connected At",
+                    value=connected_time.strftime("%Y-%m-%d %H:%M:%S"),
+                    inline=True
+                )
+            except:
+                embed.add_field(name="🕐 Connected At", value="Unknown format", inline=True)
+
+        if cache.get("folder_link"):
+            embed.add_field(
+                name="📁 Folder Link",
+                value=f"[Open in Drive]({cache.get('folder_link')})",
+                inline=False
+            )
+
+        # Cache file info
+        if os.path.exists(CACHE_FILE):
+            file_size = os.path.getsize(CACHE_FILE)
+            embed.add_field(
+                name="📄 Cache File",
+                value=f"**Path:** `{CACHE_FILE}`\n**Size:** {file_size} bytes",
+                inline=False
+            )
+
+        await ctx.followup.send(embed=embed)
+
+    except Exception as e:
+        await ctx.followup.send(f"❌ Error reading cache: {str(e)}")
+        print(f"❌ Cache info error: {e}")
+
+
+@bot.slash_command(name="clearcache", description="Clear the cached spreadsheet connection (Admin only)")
+async def clear_cache_command(ctx):
+    """Clear the cached spreadsheet connection"""
+    # Admin only
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
+    await ctx.defer(ephemeral=True)
+
+    try:
+        # Check if cache exists
+        cache_exists = os.path.exists(CACHE_FILE)
+        
+        if not cache_exists:
+            await ctx.followup.send("📄 No cache file found to clear.")
+            return
+
+        # Clear the cache
+        clear_cache()
+        
+        # Also clear the current connection
+        global sheet, spreadsheet
+        sheet = None
+        spreadsheet = None
+
+        embed = discord.Embed(
+            title="🗑️ Cache Cleared",
+            description="Cached spreadsheet connection has been cleared.\nUse `/entertemplate` to reconnect to a sheet.",
+            color=discord.Color.orange()
+        )
+
+        await ctx.followup.send(embed=embed)
+        print("🧹 Admin cleared the cache via command")
+
+    except Exception as e:
+        await ctx.followup.send(f"❌ Error clearing cache: {str(e)}")
+        print(f"❌ Clear cache error: {e}")
+
 
 if __name__ == "__main__":
     bot.run(TOKEN)
