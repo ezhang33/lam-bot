@@ -386,6 +386,17 @@ async def setup_building_structure(guild, building, first_event, room=None):
     print(f"📺 DEBUG: Getting/creating building chat: '{building_chat_name}'")
     building_chat = await get_or_create_channel(guild, building_chat_name, category, is_building_chat=True)
     
+    # Check if this is a newly created building chat (no messages yet) and send welcome message
+    if building_chat:
+        try:
+            # Check if the channel has any messages (to avoid sending duplicate welcome messages)
+            messages = [message async for message in building_chat.history(limit=1)]
+            if not messages:
+                print(f"📝 Building chat #{building_chat.name} appears to be new, sending welcome message...")
+                await send_building_welcome_message(guild, building_chat, building)
+        except Exception as e:
+            print(f"⚠️ Error checking/sending welcome message for #{building_chat.name}: {e}")
+    
     # Create event-specific channel if we have the info
     if first_event:
         # Get or create the event role
@@ -941,6 +952,65 @@ async def ensure_slacker_tournament_officials_access(guild, slacker_role):
     
     print(f"✅ Added {slacker_role.name} access to {added_count} Tournament Officials channels")
 
+async def send_building_welcome_message(guild, building_chat, building):
+    """Send an initial welcome message to a building chat with all events in that building"""
+    if not building_chat or not building:
+        return
+    
+    try:
+        # Get all events in this building
+        building_events = await get_building_events(building)
+        
+        if not building_events:
+            print(f"⚠️ No events found for building '{building}', skipping welcome message")
+            return
+        
+        # Create the welcome message
+        embed = discord.Embed(
+            title=f"🏢 Welcome to {building}!",
+            description=f"This is the general chat for everyone with events in **{building}**.",
+            color=discord.Color.blue()
+        )
+        
+        # Add events list
+        events_text = ""
+        for event, room in building_events:
+            if room:
+                events_text += f"• **{event}** - {room}\n"
+            else:
+                events_text += f"• **{event}**\n"
+        
+        embed.add_field(
+            name="📋 Events in this building:",
+            value=events_text,
+            inline=False
+        )
+        
+        embed.add_field(
+            name="💬 How to use this chat:",
+            value="• Coordinate with other events in your building\n• Share building-specific information\n• Ask questions about the venue\n• Connect with nearby events",
+            inline=False
+        )
+        
+        embed.set_footer(text="Each event also has its own dedicated channel for event-specific discussions.")
+        
+        # Send the message
+        message = await building_chat.send(embed=embed)
+        print(f"🏢 Sent welcome message to #{building_chat.name} for building '{building}'")
+        
+        # Pin the message so it's always visible
+        try:
+            await message.pin()
+            print(f"📌 Pinned welcome message in #{building_chat.name}")
+        except discord.Forbidden:
+            print(f"⚠️ Could not pin welcome message in #{building_chat.name} (missing permissions)")
+        except Exception as e:
+            print(f"⚠️ Error pinning welcome message in #{building_chat.name}: {e}")
+            
+    except Exception as e:
+        print(f"❌ Error sending welcome message to #{building_chat.name}: {e}")
+
+
 async def add_role_to_building_chat(channel, role):
     """Add a role to a building chat channel permissions"""
     if not channel or not role:
@@ -1164,7 +1234,7 @@ async def post_welcome_tldr(welcome_channel):
         # Create welcome embed
         embed = discord.Embed(
             title="TLDR: TYPE `/login` TO GET STARTED",
-            description="Read above message for more info",
+            description="Read below message for more info",
             color=discord.Color.blue()
         )
         
@@ -1923,6 +1993,42 @@ async def get_user_event_building(discord_id):
         return None
 
 
+async def get_building_events(building):
+    """Get all events and rooms for a specific building from the main sheet"""
+    global spreadsheet
+    if not spreadsheet:
+        print("❌ No spreadsheet connected for building events lookup")
+        return []
+    
+    try:
+        # Get the main worksheet
+        sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
+        data = sheet.get_all_records()
+        
+        # Find all events in this building
+        building_events = []
+        for row in data:
+            row_building = str(row.get("Building 1", "")).strip()
+            if row_building.lower() == building.lower():
+                event = str(row.get("First Event", "")).strip()
+                room = str(row.get("Room 1", "")).strip()
+                
+                # Skip priority/custom roles (only include actual events)
+                priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Slacker", "VIPer"]
+                if event and event not in priority_roles:
+                    # Create a tuple of (event, room) to avoid duplicates
+                    event_room_combo = (event, room if room else "")
+                    if event_room_combo not in building_events:
+                        building_events.append(event_room_combo)
+        
+        print(f"🏢 Found {len(building_events)} events in building '{building}': {building_events}")
+        return building_events
+        
+    except Exception as e:
+        print(f"❌ Error looking up building events: {e}")
+        return []
+
+
 async def get_building_zone(building):
     """Get the zone number for a building from the Slacker Assignments sheet"""
     global spreadsheet
@@ -2155,12 +2261,13 @@ async def on_thread_create(thread):
                     color=discord.Color.yellow()
                 )
                 embed.add_field(
-                    name="Slackers",
-                    value=f"Please respond here if you can assist with this ticket!\n\n{mention_text}",
+                    name="Slackers Assigned",
+                    value=f"Please respond here if you can assist with this ticket!",
                     inline=False
                 )
                 
-                await thread.send(embed=embed)
+                # Send mentions as regular message content (not in embed) so Discord actually notifies users
+                await thread.send(content=mention_text, embed=embed)
                 print(f"✅ Pinged {len(slacker_mentions)} zone slackers in ticket")
                 
                 # Track this ticket for re-pinging
@@ -3587,47 +3694,6 @@ async def login_command(ctx):
     modal = EmailLoginModal()
     await ctx.send_modal(modal)
 
-@bot.slash_command(name="refreshwelcome", description="Refresh the welcome instructions in the welcome channel (Admin only)")
-async def refresh_welcome_command(ctx):
-    # Check if user has administrator permissions
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ You need administrator permissions to use this command.", ephemeral=True)
-        return
-    
-    # Defer the response since this might take a moment
-    await ctx.defer()
-    
-    try:
-        guild = ctx.guild
-        welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
-        
-        if not welcome_channel:
-            await ctx.followup.send("❌ Welcome channel not found!")
-            return
-        
-        # Clear existing welcome messages (look for bot messages with embeds)
-        async for message in welcome_channel.history(limit=50):
-            if message.author == bot.user and message.embeds:
-                try:
-                    await message.delete()
-                except:
-                    pass
-        
-        # Post fresh welcome instructions
-        await post_welcome_tldr(welcome_channel)
-        await post_welcome_instructions(welcome_channel)
-        
-        embed = discord.Embed(
-            title="✅ Welcome Instructions Refreshed",
-            description="The welcome channel has been updated with fresh instructions.",
-            color=discord.Color.green()
-        )
-        
-        await ctx.followup.send(embed=embed)
-        
-    except Exception as e:
-        await ctx.followup.send(f"❌ Error refreshing welcome instructions: {str(e)}")
-
 
 @bot.slash_command(name="assignslackerzones", description="Assign zone numbers per building in 'Slacker Assignments' using K-means (Admin only)")
 async def assign_slacker_zones_command(ctx):
@@ -4054,8 +4120,8 @@ async def send_ticket_repings(thread, ticket_info):
                 color=discord.Color.orange()
             )
             embed.add_field(
-                name="Slackers",
-                value=f"This ticket still needs assistance!\n\n{mention_text}",
+                name="Slackers Assigned",
+                value=f"This ticket still needs assistance!",
                 inline=False
             )
         else:
@@ -4066,7 +4132,7 @@ async def send_ticket_repings(thread, ticket_info):
             )
             embed.add_field(
                 name="ALL SLACKERS",
-                value=f"This ticket still needs assistance!\n\n{mention_text}",
+                value=f"This ticket still needs assistance!",
                 inline=False
             )
             embed.add_field(
@@ -4075,7 +4141,8 @@ async def send_ticket_repings(thread, ticket_info):
                 inline=False
             )
         
-        await thread.send(embed=embed)
+        # Send mentions as regular message content (not in embed) so Discord actually notifies users
+        await thread.send(content=mention_text, embed=embed)
         print(f"📢 Sent re-ping #{ping_count} for ticket {thread.id}")
         
     except Exception as e:
