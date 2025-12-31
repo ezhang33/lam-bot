@@ -16,6 +16,7 @@ load_dotenv()
 TOKEN         = os.getenv("DISCORD_TOKEN")
 SERVICE_EMAIL = os.getenv("SERVICE_EMAIL")
 # GSPCREDS      = os.getenv("GSPREAD_CREDS")
+GSPCREDS      = "/etc/secrets/gspread_creds.json"
 SHEET_ID      = os.getenv("SHEET_ID")  # Optional - can be set via /entertemplate command
 SHEET_FILE_NAME = os.getenv("SHEET_FILE_NAME", "[TEMPLATE] Socal State")  # Name of the Google Sheet file to look for
 SHEET_PAGE_NAME = os.getenv("SHEET_PAGE_NAME", "Sheet1")  # Name of the worksheet/tab within the sheet
@@ -47,13 +48,12 @@ class LamBot(commands.Bot):
 bot = LamBot()
 
 # Set up gspread client
-# scope = [
-#     "https://www.googleapis.com/auth/spreadsheets",  # Full spreadsheet access (read & write)
-#     "https://www.googleapis.com/auth/drive.readonly"  # Needed to search for sheets
-# ]
-# creds = ServiceAccountCredentials.from_json_keyfile_name(GSPCREDS, scope)
-# gc = gspread.authorize(creds)
-gc = gspread.service_account(filename="/etc/secrets/gspread-creds.json")
+scope = [
+    "https://www.googleapis.com/auth/spreadsheets",  # Full spreadsheet access (read & write)
+    "https://www.googleapis.com/auth/drive.readonly"  # Needed to search for sheets
+]
+creds = ServiceAccountCredentials.from_json_keyfile_name(GSPCREDS, scope)
+gc = gspread.authorize(creds)
 
 # Sheet connection is now handled dynamically via /entertemplate command only
 sheet = None
