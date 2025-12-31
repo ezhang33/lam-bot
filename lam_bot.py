@@ -2,9 +2,10 @@
 import os
 import asyncio
 import discord
+from discord.ext import commands, tasks
+from discord import app_commands
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from discord.ext import tasks
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import json
@@ -29,8 +30,21 @@ RESET_SERVER = os.getenv("RESET_SERVER", "false").lower() == "true"
 
 intents = discord.Intents.default()
 intents.members = True
+intents.message_content = True
 
-bot = discord.Bot(intents=intents)  # No default guild - works globally
+class LamBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix='!', intents=intents)
+    
+    async def setup_hook(self):
+        # Sync commands globally
+        try:
+            synced = await self.tree.sync()
+            print(f"✅ Synced {len(synced)} commands globally")
+        except Exception as e:
+            print(f"❌ Failed to sync commands: {e}")
+
+bot = LamBot()
 
 # Set up gspread client
 scope = [
@@ -1837,19 +1851,6 @@ async def on_ready():
     for guild in bot.guilds:
         print(f"  • {guild.name} (ID: {guild.id}) - {guild.member_count} members")
     
-    # Sync slash commands with Discord
-    try:
-        print("🔄 Syncing slash commands with Discord...")
-        synced = await bot.sync_commands()
-        if synced is not None:
-            print(f"✅ Successfully synced {len(synced)} slash commands!")
-            for command in synced:
-                print(f"  • /{command.name} - {command.description}")
-        else:
-            print("✅ Commands synced successfully!")
-    except Exception as e:
-        print(f"❌ Failed to sync commands: {e}")
-    
     # Process each guild the bot is in
     for guild in bot.guilds:
         print(f"\n🏗️ Setting up guild: {guild.name} (ID: {guild.id})")
@@ -2605,8 +2606,8 @@ async def perform_member_sync(guild, data):
     }
 
 # Discord slash commands
-@bot.slash_command(name="gettemplate", description="Get a link to the template Google Drive folder")
-async def get_template_command(ctx):
+@bot.tree.command(name="gettemplate", description="Get a link to the template Google Drive folder")
+async def get_template_command(interaction: discord.Interaction):
     """Provide a link to the template Google Drive folder"""
     template_url = "https://drive.google.com/drive/folders/1drRK7pSdCpbqzJfaDhFtKlYUrf_uYsN8?usp=sharing"
     
@@ -2634,10 +2635,11 @@ async def get_template_command(ctx):
     
     embed.set_footer(text="Use these templates for your Science Olympiad events")
     
-    await ctx.respond(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.slash_command(name="entertemplate", description="Set a new template Google Drive folder to sync users from")
-async def enter_template_command(ctx, folder_link: str):
+@bot.tree.command(name="entertemplate", description="Set a new template Google Drive folder to sync users from")
+@app_commands.describe(folder_link="Google Drive folder link (use 'Copy link' from Share dialog)")
+async def enter_template_command(interaction: discord.Interaction, folder_link: str):
     """Set a new Google Drive folder to sync users from"""
     
     # Extract folder ID from the Google Drive link
@@ -2647,7 +2649,7 @@ async def enter_template_command(ctx, folder_link: str):
             # Extract folder ID from URL like: https://drive.google.com/drive/folders/1drRK7pSdCpbqzJfaDhFtKlYUrf_uYsN8?usp=sharing
             folder_id = folder_link.split("/folders/")[1].split("?")[0]
         except (IndexError, AttributeError):
-            await ctx.respond(
+            await interaction.response.send_message(
                 "❌ Invalid Google Drive folder link format!\n\n"
                 "**Make sure to:**\n"
                 "1. Right-click your folder in Google Drive\n"
@@ -2660,7 +2662,7 @@ async def enter_template_command(ctx, folder_link: str):
             )
             return
     else:
-        await ctx.respond(
+        await interaction.response.send_message(
             "❌ Please provide a valid Google Drive folder link!\n\n"
             "**How to get the correct link:**\n"
             "1. Go to Google Drive\n"
@@ -2675,7 +2677,7 @@ async def enter_template_command(ctx, folder_link: str):
         return
     
     # Show "thinking" message
-    await ctx.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
     
     try:
         # Try to access the folder and find the template sheet
@@ -2756,7 +2758,7 @@ async def enter_template_command(ctx, folder_link: str):
                 print("❌ DEBUG: No target sheet found with exact name match")
             
             if not found_sheet:
-                await ctx.followup.send(
+                await interaction.followup.send(
                     f"❌ Could not find '{SHEET_FILE_NAME}' sheet in that folder!\n\n"
                     "**Please make sure:**\n"
                     f"• Sheet is named exactly '{SHEET_FILE_NAME}'\n"
@@ -2780,7 +2782,7 @@ async def enter_template_command(ctx, folder_link: str):
             
             if "403" in error_msg or "insufficient" in error_msg.lower() or "permission" in error_msg.lower():
                 print("❌ DEBUG: Treating as permission error")
-                await ctx.followup.send(
+                await interaction.followup.send(
                     "❌ **Permission Error!**\n\n"
                     "Bot can't access your Google Sheets.\n\n"
                     "**Fix:** Share your sheet with:\n"
@@ -2791,7 +2793,7 @@ async def enter_template_command(ctx, folder_link: str):
                 )
             else:
                 print("❌ DEBUG: Treating as general error")
-                await ctx.followup.send(f"❌ Error searching for sheet: {error_msg}", ephemeral=True)
+                await interaction.followup.send(f"❌ Error searching for sheet: {error_msg}", ephemeral=True)
             return
         
         # Try to access the specified worksheet of the found sheet
@@ -2832,7 +2834,7 @@ async def enter_template_command(ctx, folder_link: str):
             # Pre-create all building structures and channels from the sheet data
             print("🏗️ Pre-creating all building structures and channels...")
             try:
-                guild = ctx.guild
+                guild = interaction.guild
                 if guild:
                     # Extract all unique building/event combinations from the sheet
                     building_structures = set()
@@ -2885,7 +2887,7 @@ async def enter_template_command(ctx, folder_link: str):
             print("🔄 Triggering immediate sync after template connection...")
             sync_results = None
             try:
-                guild = ctx.guild
+                guild = interaction.guild
                 if guild:
                     sync_results = await perform_member_sync(guild, test_data)
                     print(f"✅ Initial sync complete: {sync_results['processed']} processed, {sync_results['invited']} invited, {sync_results['role_assignments']} roles assigned")
@@ -2942,12 +2944,12 @@ async def enter_template_command(ctx, folder_link: str):
             save_cache(cache_data)
             print(f"💾 Saved spreadsheet connection to cache")
             
-            await ctx.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             print(f"✅ Successfully switched to sheet: {found_sheet.title}")
             
             # Search for and share useful links after successful template connection
             try:
-                guild = ctx.guild
+                guild = interaction.guild
                 if guild:
                     print("🔗 Searching for useful links after template connection...")
                     await search_and_share_useful_links(guild)
@@ -2957,7 +2959,7 @@ async def enter_template_command(ctx, folder_link: str):
                 # Don't fail the whole command if useful links search fails
             
         except Exception as e:
-            await ctx.followup.send(f"❌ Error accessing sheet data: {str(e)}", ephemeral=True)
+            await interaction.followup.send(f"❌ Error accessing sheet data: {str(e)}", ephemeral=True)
             return
             
     except Exception as e:
@@ -2965,33 +2967,33 @@ async def enter_template_command(ctx, folder_link: str):
         print(f"❌ DEBUG: Exception type: {type(e)}")
         print(f"❌ DEBUG: Exception message: {str(e)}")
         print(f"❌ DEBUG: Exception args: {e.args}")
-        await ctx.followup.send(f"❌ Error processing folder: {str(e)}", ephemeral=True)
+        await interaction.followup.send(f"❌ Error processing folder: {str(e)}", ephemeral=True)
         return
 
-@bot.slash_command(name="sync", description="Manually trigger a member sync from the current Google Sheet (admin only)")
-async def sync_command(ctx):
+@bot.tree.command(name="sync", description="Manually trigger a member sync from the current Google Sheet (admin only)")
+async def sync_command(interaction: discord.Interaction):
     """Manually trigger a member sync"""
     
     # Check if user has permission (you might want to restrict this to admins)
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
     
-    await ctx.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
     
     try:
         # Run the sync function
-        print("🔄 Manual sync triggered by", ctx.author)
+        print("🔄 Manual sync triggered by", interaction.user)
         
         # Use the guild where the command was called
-        guild = ctx.guild
+        guild = interaction.guild
         if guild is None:
-            await ctx.followup.send("❌ This command must be used in a server!", ephemeral=True)
+            await interaction.followup.send("❌ This command must be used in a server!", ephemeral=True)
             return
         
         # Check if we have a sheet connected
         if sheet is None:
-            await ctx.followup.send(
+            await interaction.followup.send(
                 "❌ No sheet connected!\n\n"
                 f"Use `/entertemplate` to connect to a Google Drive folder with a '{SHEET_FILE_NAME}' sheet first.",
                 ephemeral=True
@@ -3003,7 +3005,7 @@ async def sync_command(ctx):
             data = sheet.get_all_records()
             print(f"📊 Found {len(data)} rows in spreadsheet")
         except Exception as e:
-            await ctx.followup.send(f"❌ Could not fetch sheet data: {str(e)}", ephemeral=True)
+            await interaction.followup.send(f"❌ Could not fetch sheet data: {str(e)}", ephemeral=True)
             return
         
         # Run the sync using the shared function
@@ -3021,13 +3023,13 @@ async def sync_command(ctx):
         )
         embed.set_footer(text="Sync completed successfully")
         
-        await ctx.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
         
     except Exception as e:
-        await ctx.followup.send(f"❌ Error during manual sync: {str(e)}", ephemeral=True)
+        await interaction.followup.send(f"❌ Error during manual sync: {str(e)}", ephemeral=True)
 
-@bot.slash_command(name="sheetinfo", description="Show information about the currently connected Google Sheet")
-async def sheet_info_command(ctx):
+@bot.tree.command(name="sheetinfo", description="Show information about the currently connected Google Sheet")
+async def sheet_info_command(interaction: discord.Interaction):
     """Show information about the currently connected sheet"""
     
     if sheet is None:
@@ -3087,7 +3089,7 @@ async def sheet_info_command(ctx):
             )
             embed.add_field(name="💡 Suggestion", value="Try using `/entertemplate` to reconnect to the sheet", inline=False)
     
-    await ctx.respond(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 def _run_kmeans_clustering(points, k, max_iterations=100):
 	"""Run a simple K-means clustering on 2D points.
@@ -3180,8 +3182,8 @@ def _run_kmeans_clustering(points, k, max_iterations=100):
 
 	return labels
 
-@bot.slash_command(name="help", description="Show all available bot commands and how to use them")
-async def help_command(ctx):
+@bot.tree.command(name="help", description="Show all available bot commands and how to use them")
+async def help_command(interaction: discord.Interaction):
     """Show help information for all bot commands"""
     
     embed = discord.Embed(
@@ -3294,10 +3296,10 @@ async def help_command(ctx):
     
     embed.set_footer(text="Need more help? Check the documentation or contact your server administrator.")
     
-    await ctx.respond(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.slash_command(name="serviceaccount", description="Show the service account email for sharing Google Sheets")
-async def service_account_command(ctx):
+@bot.tree.command(name="serviceaccount", description="Show the service account email for sharing Google Sheets")
+async def service_account_command(interaction: discord.Interaction):
     """Show the service account email that needs access to Google Sheets"""
     
     embed = discord.Embed(
@@ -3331,26 +3333,26 @@ async def service_account_command(ctx):
     
     embed.set_footer(text="The service account only needs 'Editor' permissions to read your data")
     
-    await ctx.respond(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 
-@bot.slash_command(name="organizeroles", description="Organize server roles in priority order (Admin only)")
-async def organize_roles_command(ctx):
+@bot.tree.command(name="organizeroles", description="Organize server roles in priority order (Admin only)")
+async def organize_roles_command(interaction: discord.Interaction):
     """Manually organize server roles in priority order"""
     
     # Check if user has permission
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
     
-    await ctx.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
     
     try:
-        print(f"🎭 Manual role organization triggered by {ctx.author}")
+        print(f"🎭 Manual role organization triggered by {interaction.user}")
         
         # Check bot permissions first
-        if not ctx.guild.me.guild_permissions.manage_roles:
+        if not interaction.guild.me.guild_permissions.manage_roles:
             embed = discord.Embed(
                 title="❌ Missing Permissions!",
                 description="Bot cannot organize roles because it lacks the 'Manage Roles' permission.",
@@ -3361,21 +3363,21 @@ async def organize_roles_command(ctx):
                 value="1. Go to **Server Settings** → **Roles**\n2. Find the bot's role\n3. Enable **'Manage Roles'** permission\n4. Try this command again",
                 inline=False
             )
-            await ctx.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             return
         
         # Get bot role position
         bot_role = None
-        for role in ctx.guild.roles:
-            if role.managed and role.members and ctx.guild.me in role.members:
+        for role in interaction.guild.roles:
+            if role.managed and role.members and interaction.guild.me in role.members:
                 bot_role = role
                 break
         
         # Organize roles
-        await organize_role_hierarchy_for_guild(ctx.guild)
+        await organize_role_hierarchy_for_guild(interaction.guild)
         
         # Check if there were permission issues
-        higher_roles = [r for r in ctx.guild.roles if r.position >= (bot_role.position if bot_role else 0) and r.name != "@everyone" and r != bot_role]
+        higher_roles = [r for r in interaction.guild.roles if r.position >= (bot_role.position if bot_role else 0) and r.name != "@everyone" and r != bot_role]
         
         if higher_roles:
             embed = discord.Embed(
@@ -3422,25 +3424,25 @@ async def organize_roles_command(ctx):
             )
         
         embed.set_footer(text="Role organization complete!")
-        await ctx.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
         
     except Exception as e:
-        await ctx.followup.send(f"❌ Error organizing roles: {str(e)}", ephemeral=True)
+        await interaction.followup.send(f"❌ Error organizing roles: {str(e)}", ephemeral=True)
         print(f"❌ Error organizing roles: {e}")
 
-@bot.slash_command(name="reloadcommands", description="Manually sync slash commands with Discord (Admin only)")
-async def reload_commands_command(ctx):
+@bot.tree.command(name="reloadcommands", description="Manually sync slash commands with Discord (Admin only)")
+async def reload_commands_command(interaction: discord.Interaction):
     """Manually sync slash commands with Discord"""
     
     # Check if user has permission
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
     
-    await ctx.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
     
     try:
-        print(f"🔄 Manual command sync triggered by {ctx.author}")
+        print(f"🔄 Manual command sync triggered by {interaction.user}")
         synced = await bot.sync_commands()
         
         embed = discord.Embed(
@@ -3472,10 +3474,10 @@ async def reload_commands_command(ctx):
             print("✅ Commands synced successfully!")
         
         embed.set_footer(text="Commands should now be available in Discord!")
-        await ctx.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
             
     except Exception as e:
-        await ctx.followup.send(f"❌ Error syncing commands: {str(e)}", ephemeral=True)
+        await interaction.followup.send(f"❌ Error syncing commands: {str(e)}", ephemeral=True)
         print(f"❌ Error syncing commands: {e}")
 
 # Modal for email input
@@ -3483,10 +3485,10 @@ class EmailLoginModal(discord.ui.Modal):
     def __init__(self):
         super().__init__(title="Login with Email")
         
-        self.email_input = discord.ui.InputText(
+        self.email_input = discord.ui.TextInput(
             label="Email Address",
             placeholder="Enter your email address...",
-            style=discord.InputTextStyle.short,
+            style=discord.TextStyle.short,
             required=True
         )
         self.add_item(self.email_input)
@@ -3701,29 +3703,29 @@ class EmailLoginModal(discord.ui.Modal):
             )
             print(f"❌ Error accessing sheet in login: {e}")
 
-@bot.slash_command(name="login", description="Login by providing your email address to get your assigned roles")
-async def login_command(ctx):
+@bot.tree.command(name="login", description="Login by providing your email address to get your assigned roles")
+async def login_command(interaction: discord.Interaction):
     """Login with email to get assigned roles"""
     
     # Show the modal
     modal = EmailLoginModal()
-    await ctx.send_modal(modal)
+    await interaction.response.send_modal(modal)
 
 
-@bot.slash_command(name="assignslackerzones", description="Assign zone numbers per building in 'Slacker Assignments' using K-means (Admin only)")
-async def assign_slacker_zones_command(ctx):
+@bot.tree.command(name="assignslackerzones", description="Assign zone numbers per building in 'Slacker Assignments' using K-means (Admin only)")
+async def assign_slacker_zones_command(interaction: discord.Interaction):
     """Read 'Slacker Assignments' worksheet, cluster by building into K zones, write labels to 'Zone Number' column."""
     # Admin only
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    await ctx.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
 
     # Verify spreadsheet connection
     global spreadsheet
     if spreadsheet is None:
-        await ctx.followup.send(
+        await interaction.followup.send(
             "❌ No spreadsheet connected! Use `/entertemplate` first to connect your sheet.",
             ephemeral=True
         )
@@ -3743,7 +3745,7 @@ async def assign_slacker_zones_command(ctx):
             sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
             parent_folders = sheet_metadata.get('parents', [])
             if not parent_folders:
-                await ctx.followup.send("❌ Could not determine parent folder to search for 'Slacker Assignments' sheet.", ephemeral=True)
+                await interaction.followup.send("❌ Could not determine parent folder to search for 'Slacker Assignments' sheet.", ephemeral=True)
                 return
             parent_folder_id = parent_folders[0]
             # Search spreadsheets in same folder
@@ -3751,7 +3753,7 @@ async def assign_slacker_zones_command(ctx):
             results = drive_service.files().list(q=q, fields='files(id, name)').execute()
             files = results.get('files', [])
             if not files:
-                await ctx.followup.send(f"❌ Could not find a spreadsheet named '{worksheet_name}' in the same folder as the template.", ephemeral=True)
+                await interaction.followup.send(f"❌ Could not find a spreadsheet named '{worksheet_name}' in the same folder as the template.", ephemeral=True)
                 return
             target = files[0]
             other_sheet = gc.open_by_key(target['id'])
@@ -3761,7 +3763,7 @@ async def assign_slacker_zones_command(ctx):
             except Exception:
                 ws = other_sheet.worksheets()[0]
         except Exception as e2:
-            await ctx.followup.send(f"❌ Could not locate '{worksheet_name}' in the same Drive folder: {str(e2)}", ephemeral=True)
+            await interaction.followup.send(f"❌ Could not locate '{worksheet_name}' in the same Drive folder: {str(e2)}", ephemeral=True)
             return
 
     # Fetch data
@@ -3769,7 +3771,7 @@ async def assign_slacker_zones_command(ctx):
         headers = ws.row_values(1)
         rows = ws.get_all_records()
     except Exception as e:
-        await ctx.followup.send(f"❌ Could not read worksheet data: {str(e)}", ephemeral=True)
+        await interaction.followup.send(f"❌ Could not read worksheet data: {str(e)}", ephemeral=True)
         return
 
     # Normalize header names for lookups
@@ -3801,7 +3803,7 @@ async def assign_slacker_zones_command(ctx):
             headers.append("zone number")
             zones_col_index = new_col_idx
         except Exception as e:
-            await ctx.followup.send(f"❌ Could not create 'Zone Number' column: {str(e)}", ephemeral=True)
+            await interaction.followup.send(f"❌ Could not create 'Zone Number' column: {str(e)}", ephemeral=True)
             return
 
     # Build data per building
@@ -3856,7 +3858,7 @@ async def assign_slacker_zones_command(ctx):
         building_points[building].append((idx, (lat, lon)))
 
     if not building_points:
-        await ctx.followup.send("⚠️ No valid location rows found to cluster.", ephemeral=True)
+        await interaction.followup.send("⚠️ No valid location rows found to cluster.", ephemeral=True)
         return
 
     # Compute clusters and prepare updates
@@ -3910,7 +3912,7 @@ async def assign_slacker_zones_command(ctx):
     if len(debug_info) > 5:
         debug_text += f"\n... and {len(debug_info) - 5} more buildings"
     
-    await ctx.followup.send(
+    await interaction.followup.send(
         f"✅ Assigned {k_to_use} zones for {len(updates)} rows across {len(building_points)} buildings in '{worksheet_name}'.",
         ephemeral=True
     )
@@ -4168,21 +4170,22 @@ async def send_ticket_repings(thread, ticket_info):
         print(f"❌ Error sending re-ping for ticket {thread.id}: {e}")
 
 
-@bot.slash_command(name="debugzone", description="Debug zone assignment for a user (Admin only)")
-async def debug_zone_command(ctx, user: discord.Member):
+@bot.tree.command(name="debugzone", description="Debug zone assignment for a user (Admin only)")
+@app_commands.describe(user="The user to debug zone assignment for")
+async def debug_zone_command(interaction: discord.Interaction, user: discord.Member):
     """Debug command to test zone assignment for a specific user"""
     # Admin only
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    await ctx.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
 
     try:
         # Look up the user's event and building
         user_event_info = await get_user_event_building(user.id)
         if not user_event_info:
-            await ctx.followup.send(f"❌ Could not find event/building info for {user.mention}")
+            await interaction.followup.send(f"❌ Could not find event/building info for {user.mention}")
             return
 
         building = user_event_info.get("building")
@@ -4191,13 +4194,13 @@ async def debug_zone_command(ctx, user: discord.Member):
         name = user_event_info.get("name")
 
         if not building:
-            await ctx.followup.send(f"❌ No building found for {user.mention} (event: {event})")
+            await interaction.followup.send(f"❌ No building found for {user.mention} (event: {event})")
             return
 
         # Get the zone for this building
         zone = await get_building_zone(building)
         if not zone:
-            await ctx.followup.send(f"❌ No zone found for building '{building}'")
+            await interaction.followup.send(f"❌ No zone found for building '{building}'")
             return
 
         # Get all slackers in this zone
@@ -4222,7 +4225,7 @@ async def debug_zone_command(ctx, user: discord.Member):
         if zone_slackers:
             slacker_mentions = []
             for slacker_id in zone_slackers:
-                member = ctx.guild.get_member(slacker_id)
+                member = interaction.guild.get_member(slacker_id)
                 if member:
                     slacker_mentions.append(member.mention)
                 else:
@@ -4236,28 +4239,28 @@ async def debug_zone_command(ctx, user: discord.Member):
         else:
             embed.add_field(name="Zone Slackers", value="No slackers found for this zone", inline=False)
 
-        await ctx.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        await ctx.followup.send(f"❌ Error during debug: {str(e)}")
+        await interaction.followup.send(f"❌ Error during debug: {str(e)}")
         print(f"❌ Debug zone error: {e}")
         import traceback
         traceback.print_exc()
 
 
-@bot.slash_command(name="activetickets", description="Show all active help tickets being tracked (Admin only)")
-async def active_tickets_command(ctx):
+@bot.tree.command(name="activetickets", description="Show all active help tickets being tracked (Admin only)")
+async def active_tickets_command(interaction: discord.Interaction):
     """Debug command to show all active help tickets"""
     # Admin only
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    await ctx.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
 
     try:
         if not active_help_tickets:
-            await ctx.followup.send("✅ No active help tickets being tracked.")
+            await interaction.followup.send("✅ No active help tickets being tracked.")
             return
 
         embed = discord.Embed(
@@ -4268,7 +4271,7 @@ async def active_tickets_command(ctx):
 
         for thread_id, ticket_info in list(active_help_tickets.items())[:10]:  # Limit to 10 for display
             # Get thread info
-            thread = ctx.guild.get_thread(thread_id)
+            thread = interaction.guild.get_thread(thread_id)
             thread_name = thread.name if thread else f"Thread {thread_id} (not found)"
             
             # Calculate time since creation
@@ -4294,30 +4297,30 @@ async def active_tickets_command(ctx):
                 inline=False
             )
 
-        await ctx.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        await ctx.followup.send(f"❌ Error fetching active tickets: {str(e)}")
+        await interaction.followup.send(f"❌ Error fetching active tickets: {str(e)}")
         print(f"❌ Active tickets error: {e}")
         import traceback
         traceback.print_exc()
 
 
-@bot.slash_command(name="cacheinfo", description="Show cached spreadsheet connection info (Admin only)")
-async def cache_info_command(ctx):
+@bot.tree.command(name="cacheinfo", description="Show cached spreadsheet connection info (Admin only)")
+async def cache_info_command(interaction: discord.Interaction):
     """Show information about the cached spreadsheet connection"""
     # Admin only
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    await ctx.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
 
     try:
         cache = load_cache()
         
         if not cache:
-            await ctx.followup.send("📄 No cache file found.")
+            await interaction.followup.send("📄 No cache file found.")
             return
 
         embed = discord.Embed(
@@ -4368,29 +4371,29 @@ async def cache_info_command(ctx):
                 inline=False
             )
 
-        await ctx.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        await ctx.followup.send(f"❌ Error reading cache: {str(e)}")
+        await interaction.followup.send(f"❌ Error reading cache: {str(e)}")
         print(f"❌ Cache info error: {e}")
 
 
-@bot.slash_command(name="clearcache", description="Clear the cached spreadsheet connection (Admin only)")
-async def clear_cache_command(ctx):
+@bot.tree.command(name="clearcache", description="Clear the cached spreadsheet connection (Admin only)")
+async def clear_cache_command(interaction: discord.Interaction):
     """Clear the cached spreadsheet connection"""
     # Admin only
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ You need administrator permissions to use this command!", ephemeral=True)
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    await ctx.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
 
     try:
         # Check if cache exists
         cache_exists = os.path.exists(CACHE_FILE)
         
         if not cache_exists:
-            await ctx.followup.send("📄 No cache file found to clear.")
+            await interaction.followup.send("📄 No cache file found to clear.")
             return
 
         # Clear the cache
@@ -4407,30 +4410,34 @@ async def clear_cache_command(ctx):
             color=discord.Color.orange()
         )
 
-        await ctx.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed)
         print("🧹 Admin cleared the cache via command")
 
     except Exception as e:
-        await ctx.followup.send(f"❌ Error clearing cache: {str(e)}")
+        await interaction.followup.send(f"❌ Error clearing cache: {str(e)}")
         print(f"❌ Clear cache error: {e}")
 
 
-@bot.slash_command(name="msg", description="Send a message as the bot (:( role only)")
-async def msg_command(ctx, message: str, channel: discord.TextChannel = None):
+@bot.tree.command(name="msg", description="Send a message as the bot (:( role only)")
+@app_commands.describe(
+    message="The message to send",
+    channel="Channel to send to (optional, defaults to current channel)"
+)
+async def msg_command(interaction: discord.Interaction, message: str, channel: discord.TextChannel = None):
     """Send a message as the bot - restricted to :( role only"""
     
     # Check if user has the :( role
-    sad_face_role = discord.utils.get(ctx.author.roles, name=":(")
+    sad_face_role = discord.utils.get(interaction.user.roles, name=":(")
     if not sad_face_role:
-        await ctx.respond("❌ You need the `:( ` role to use this command!", ephemeral=True)
+        await interaction.response.send_message("❌ You need the `:( ` role to use this command!", ephemeral=True)
         return
     
     # Use current channel if no channel specified
-    target_channel = channel or ctx.channel
+    target_channel = channel or interaction.channel
     
     # Check if bot has permission to send messages in the target channel
-    if not target_channel.permissions_for(ctx.guild.me).send_messages:
-        await ctx.respond(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
+    if not target_channel.permissions_for(interaction.guild.me).send_messages:
+        await interaction.response.send_message(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
         return
     
     try:
@@ -4438,18 +4445,18 @@ async def msg_command(ctx, message: str, channel: discord.TextChannel = None):
         await target_channel.send(message)
         
         # Confirm to the user (privately)
-        if target_channel == ctx.channel:
-            await ctx.respond("✅ Message sent!", ephemeral=True)
+        if target_channel == interaction.channel:
+            await interaction.response.send_message("✅ Message sent!", ephemeral=True)
         else:
-            await ctx.respond(f"✅ Message sent to {target_channel.mention}!", ephemeral=True)
+            await interaction.response.send_message(f"✅ Message sent to {target_channel.mention}!", ephemeral=True)
         
         # Log the action
-        print(f"📢 {ctx.author} used /msg in {ctx.guild.name}: '{message}' → #{target_channel.name}")
+        print(f"📢 {interaction.user} used /msg in {interaction.guild.name}: '{message}' → #{target_channel.name}")
         
     except discord.Forbidden:
-        await ctx.respond(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
+        await interaction.response.send_message(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
     except Exception as e:
-        await ctx.respond(f"❌ Error sending message: {str(e)}", ephemeral=True)
+        await interaction.response.send_message(f"❌ Error sending message: {str(e)}", ephemeral=True)
         print(f"❌ Error in /msg command: {e}")
 
 
