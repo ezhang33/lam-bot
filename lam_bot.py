@@ -4463,4 +4463,5 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
 
 webserver.keep_alive()
 
-bot.run(TOKEN)
+if __name__ == "__main__":
+    bot.run(TOKEN)
