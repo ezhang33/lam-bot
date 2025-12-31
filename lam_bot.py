@@ -154,6 +154,62 @@ async def load_spreadsheet_from_cache():
         clear_cache()
         return False
 
+async def handle_rate_limit(coro, operation_name, max_retries=3, default_delay=0.1):
+    """
+    Helper function to handle rate limits for Discord API calls.
+    
+    Args:
+        coro: Coroutine to execute
+        operation_name: Name of the operation for logging
+        max_retries: Maximum number of retries (default: 3)
+        default_delay: Default delay after successful operation in seconds (default: 0.1)
+    
+    Returns:
+        Result of the coroutine, or None if all retries failed
+    """
+    retry_count = 0
+    while retry_count < max_retries:
+        try:
+            result = await coro
+            # Small delay after successful operation to avoid rate limits
+            await asyncio.sleep(default_delay)
+            return result
+        except discord.HTTPException as e:
+            error_msg = str(e)
+            if e.status == 429 or "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+                retry_count += 1
+                if retry_count < max_retries:
+                    # Extract retry_after from response if available
+                    retry_after = 1.0  # Default 1 second
+                    if hasattr(e, 'retry_after') and e.retry_after:
+                        retry_after = float(e.retry_after)
+                    elif isinstance(e.response, dict) and 'retry_after' in e.response:
+                        retry_after = float(e.response['retry_after'])
+                    
+                    print(f"⚠️ Rate limited on {operation_name}, waiting {retry_after}s before retry {retry_count}/{max_retries}...")
+                    await asyncio.sleep(retry_after)
+                else:
+                    print(f"❌ Rate limited on {operation_name} after {max_retries} retries, giving up")
+                    return None
+            else:
+                # Re-raise non-rate-limit errors
+                raise
+        except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+                retry_count += 1
+                if retry_count < max_retries:
+                    print(f"⚠️ Rate limited on {operation_name}, waiting 1s before retry {retry_count}/{max_retries}...")
+                    await asyncio.sleep(1.0)
+                else:
+                    print(f"❌ Rate limited on {operation_name} after {max_retries} retries, giving up")
+                    return None
+            else:
+                # Re-raise non-rate-limit errors
+                raise
+    
+    return None
+
 async def get_or_create_role(guild, role_name):
     """Get a role by name, or create it if it doesn't exist"""
     role = discord.utils.get(guild.roles, name=role_name)
@@ -169,14 +225,47 @@ async def get_or_create_role(guild, role_name):
     try:
         # Special case: :( role gets full permissions
         if role_name == ":(":
-            role = await guild.create_role(
-                name=":(",
-                permissions=discord.Permissions.all(),
-                color=discord.Color.purple(),
-                reason="Auto-created :( role for ezhang."
-            )
-            print(f"🆕 Created :( role with full permissions")
-            return role
+            max_retries = 3
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    role = await guild.create_role(
+                        name=":(",
+                        permissions=discord.Permissions.all(),
+                        color=discord.Color.purple(),
+                        reason="Auto-created :( role for ezhang."
+                    )
+                    print(f"🆕 Created :( role with full permissions")
+                    await asyncio.sleep(0.1)  # Small delay to avoid rate limits
+                    return role
+                except discord.HTTPException as e:
+                    error_msg = str(e)
+                    if e.status == 429 or "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            retry_after = 1.0
+                            if hasattr(e, 'retry_after') and e.retry_after:
+                                retry_after = float(e.retry_after)
+                            print(f"⚠️ Rate limited creating :( role, waiting {retry_after}s before retry {retry_count}/{max_retries}...")
+                            await asyncio.sleep(retry_after)
+                        else:
+                            print(f"❌ Rate limited creating :( role after {max_retries} retries, giving up")
+                            return None
+                    else:
+                        raise  # Re-raise non-rate-limit errors
+                except Exception as e:
+                    error_msg = str(e)
+                    if "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            print(f"⚠️ Rate limited creating :( role, waiting 1s before retry {retry_count}/{max_retries}...")
+                            await asyncio.sleep(1.0)
+                        else:
+                            print(f"❌ Rate limited creating :( role after {max_retries} retries, giving up")
+                            return None
+                    else:
+                        raise  # Re-raise non-rate-limit errors
+            return None
         
         # Custom color mapping for specific roles
         custom_role_colors = {
@@ -224,21 +313,56 @@ async def get_or_create_role(guild, role_name):
             role_color = color_map.get(DEFAULT_ROLE_COLOR.lower(), discord.Color.light_gray())
             color_name = DEFAULT_ROLE_COLOR
         
-        role = await guild.create_role(
-            name=role_name,
-            color=role_color,
-            reason="Auto-created by LAM Bot for onboarding"
-        )
-        print(f"🆕 Created new role: '{role_name}' (color: {color_name})")
+        max_retries = 3
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                role = await guild.create_role(
+                    name=role_name,
+                    color=role_color,
+                    reason="Auto-created by LAM Bot for onboarding"
+                )
+                print(f"🆕 Created new role: '{role_name}' (color: {color_name})")
+                
+                # If we just created the Slacker role, ensure it has access to Tournament Officials channels
+                if role_name == "Slacker":
+                    await ensure_slacker_tournament_officials_access(guild, role)
+                
+                # Note: Test folder search is now handled in setup_building_structure after channels are created
+                # to ensure the target channel exists when we try to post the message
+                
+                # Small delay after creating role to avoid rate limits
+                await asyncio.sleep(0.1)
+                return role
+            except discord.HTTPException as e:
+                error_msg = str(e)
+                if e.status == 429 or "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        retry_after = 1.0
+                        if hasattr(e, 'retry_after') and e.retry_after:
+                            retry_after = float(e.retry_after)
+                        print(f"⚠️ Rate limited creating role '{role_name}', waiting {retry_after}s before retry {retry_count}/{max_retries}...")
+                        await asyncio.sleep(retry_after)
+                    else:
+                        print(f"❌ Rate limited creating role '{role_name}' after {max_retries} retries, giving up")
+                        return None
+                else:
+                    raise  # Re-raise non-rate-limit errors
+            except Exception as e:
+                error_msg = str(e)
+                if "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        print(f"⚠️ Rate limited creating role '{role_name}', waiting 1s before retry {retry_count}/{max_retries}...")
+                        await asyncio.sleep(1.0)
+                    else:
+                        print(f"❌ Rate limited creating role '{role_name}' after {max_retries} retries, giving up")
+                        return None
+                else:
+                    raise  # Re-raise non-rate-limit errors
         
-        # If we just created the Slacker role, ensure it has access to Tournament Officials channels
-        if role_name == "Slacker":
-            await ensure_slacker_tournament_officials_access(guild, role)
-        
-        # Note: Test folder search is now handled in setup_building_structure after channels are created
-        # to ensure the target channel exists when we try to post the message
-        
-        return role
+        return None
     except discord.Forbidden:
         print(f"❌ No permission to create role '{role_name}'")
         return None
@@ -254,11 +378,15 @@ async def get_or_create_category(guild, category_name):
         return category
     
     try:
-        category = await guild.create_category(
-            name=category_name,
-            reason="Auto-created by LAM Bot for building organization"
+        category = await handle_rate_limit(
+            guild.create_category(
+                name=category_name,
+                reason="Auto-created by LAM Bot for building organization"
+            ),
+            f"creating category '{category_name}'"
         )
-        print(f"🏢 DEBUG: Created NEW category: '{category_name}' (ID: {category.id})")
+        if category:
+            print(f"🏢 DEBUG: Created NEW category: '{category_name}' (ID: {category.id})")
         return category
     except discord.Forbidden:
         print(f"❌ No permission to create category '{category_name}'")
@@ -302,19 +430,23 @@ async def get_or_create_channel(guild, channel_name, category, event_role=None, 
             # Building chat channel: restricted by default, roles will be added later
             overwrites[guild.default_role] = discord.PermissionOverwrite(read_messages=False)
         
-        channel = await guild.create_text_channel(
-            name=channel_name,
-            category=category,
-            overwrites=overwrites,
-            reason="Auto-created by LAM Bot for event organization"
+        channel = await handle_rate_limit(
+            guild.create_text_channel(
+                name=channel_name,
+                category=category,
+                overwrites=overwrites,
+                reason="Auto-created by LAM Bot for event organization"
+            ),
+            f"creating channel '{channel_name}'"
         )
         
-        if event_role:
-            print(f"📺 DEBUG: Created NEW channel: '#{channel_name}' (ID: {channel.id}, restricted to {event_role.name})")
-        elif is_building_chat:
-            print(f"📺 DEBUG: Created NEW building chat: '#{channel_name}' (ID: {channel.id}, restricted)")
-        else:
-            print(f"📺 DEBUG: Created NEW channel: '#{channel_name}' (ID: {channel.id})")
+        if channel:
+            if event_role:
+                print(f"📺 DEBUG: Created NEW channel: '#{channel_name}' (ID: {channel.id}, restricted to {event_role.name})")
+            elif is_building_chat:
+                print(f"📺 DEBUG: Created NEW building chat: '#{channel_name}' (ID: {channel.id}, restricted)")
+            else:
+                print(f"📺 DEBUG: Created NEW channel: '#{channel_name}' (ID: {channel.id})")
         return channel
     except discord.Forbidden:
         print(f"❌ No permission to create channel '{channel_name}'")
@@ -368,15 +500,23 @@ async def sort_building_categories_alphabetically(guild):
         
         for category in ordered_static_categories:
             if category.position != position:
-                await category.edit(position=position, reason="Organizing categories")
-                print(f"📋 Moved category '{category.name}' to position {position}")
+                result = await handle_rate_limit(
+                    category.edit(position=position, reason="Organizing categories"),
+                    f"moving category '{category.name}'"
+                )
+                if result is not None:
+                    print(f"📋 Moved category '{category.name}' to position {position}")
             position += 1
         
         # Position building categories alphabetically after static ones
         for category in building_categories:
             if category.position != position:
-                await category.edit(position=position, reason="Organizing building categories alphabetically")
-                print(f"🏢 Moved building category '{category.name}' to position {position}")
+                result = await handle_rate_limit(
+                    category.edit(position=position, reason="Organizing building categories alphabetically"),
+                    f"moving building category '{category.name}'"
+                )
+                if result is not None:
+                    print(f"🏢 Moved building category '{category.name}' to position {position}")
             position += 1
             
         print("📋 Categories organized: Static categories first, then buildings alphabetically")
@@ -729,7 +869,10 @@ async def setup_chapter_structure(guild, chapter_name):
                     read_message_history=True
                 )
             
-            await chapter_channel.edit(overwrites=overwrites, reason=f"Set up {chapter_name} chapter permissions")
+            await handle_rate_limit(
+                chapter_channel.edit(overwrites=overwrites, reason=f"Set up {chapter_name} chapter permissions"),
+                f"editing chapter channel '{channel_name}' permissions"
+            )
             print(f"📖 Set up permissions for #{channel_name} chapter channel")
             
             # Sort chapter channels after creating a new one
@@ -769,8 +912,12 @@ async def sort_chapter_channels_alphabetically(guild):
         for i, channel in enumerate(final_order):
             if channel.position != i:
                 try:
-                    await channel.edit(position=i, reason="Sorting chapter channels alphabetically")
-                    print(f"📖 Moved #{channel.name} to position {i}")
+                    result = await handle_rate_limit(
+                        channel.edit(position=i, reason="Sorting chapter channels alphabetically"),
+                        f"moving channel '{channel.name}'"
+                    )
+                    if result is not None:
+                        print(f"📖 Moved #{channel.name} to position {i}")
                 except Exception as e:
                     print(f"❌ Error moving #{channel.name}: {e}")
         
@@ -944,7 +1091,10 @@ async def add_slacker_access(channel, slacker_role):
         )
         
         # Update channel permissions
-        await channel.edit(overwrites=overwrites, reason=f"Added {slacker_role.name} access to all channels")
+        await handle_rate_limit(
+            channel.edit(overwrites=overwrites, reason=f"Added {slacker_role.name} access to all channels"),
+            f"editing channel '{channel.name}' permissions"
+        )
         print(f"🔑 Added {slacker_role.name} access to #{channel.name}")
         
     except discord.Forbidden:
@@ -1059,7 +1209,10 @@ async def add_role_to_building_chat(channel, role):
         )
         
         # Update channel permissions
-        await channel.edit(overwrites=overwrites, reason=f"Added {role.name} to building chat access")
+        await handle_rate_limit(
+            channel.edit(overwrites=overwrites, reason=f"Added {role.name} to building chat access"),
+            f"editing building chat '{channel.name}' permissions"
+        )
         print(f"🔒 Added {role.name} access to #{channel.name}")
         
     except discord.Forbidden:
@@ -1087,7 +1240,10 @@ async def reset_server_for_guild(guild):
     for member in guild.members:
         if member.nick and not member.bot:  # Don't reset bot nicknames
             try:
-                await member.edit(nick=None, reason="Server reset - clearing nickname")
+                await handle_rate_limit(
+                    member.edit(nick=None, reason="Server reset - clearing nickname"),
+                    f"resetting nickname for {member}"
+                )
                 nickname_count += 1
                 print(f"📝 Reset nickname for {member.display_name}")
             except discord.Forbidden:
@@ -1327,11 +1483,14 @@ async def setup_static_channels_for_guild(guild):
                             read_message_history=True
                         )
                     
-                    channel = await guild.create_text_channel(
-                        name=channel_name,
-                        category=tournament_officials_category,
-                        overwrites=overwrites,
-                        reason="Auto-created by LAM Bot - Tournament Officials only"
+                    channel = await handle_rate_limit(
+                        guild.create_text_channel(
+                            name=channel_name,
+                            category=tournament_officials_category,
+                            overwrites=overwrites,
+                            reason="Auto-created by LAM Bot - Tournament Officials only"
+                        ),
+                        f"creating channel '{channel_name}'"
                     )
                     if channel_name == "awards-ceremony":
                         print(f"📺 Created restricted channel: '#{channel_name}' (Slacker + Awards)")
@@ -1380,7 +1539,10 @@ async def setup_static_channels_for_guild(guild):
                             read_message_history=True
                         )
                     
-                    await channel.edit(overwrites=overwrites, reason="Updated to restrict to Slacker role only")
+                    await handle_rate_limit(
+                        channel.edit(overwrites=overwrites, reason="Updated to restrict to Slacker role only"),
+                        f"editing channel '{channel_name}' permissions"
+                    )
                     if channel_name == "awards-ceremony":
                         print(f"🔒 Updated #{channel_name} to be Slacker + Awards")
                     else:
@@ -1442,19 +1604,26 @@ async def setup_static_channels_for_guild(guild):
                 
                 # Try different methods to create forum
                 if hasattr(guild, 'create_forum_channel'):
-                    help_channel = await guild.create_forum_channel(
-                        name="help",
-                        category=volunteers_category,
-                        overwrites=overwrites,
-                        reason="Auto-created LAM Bot forum channel"
+                    help_channel = await handle_rate_limit(
+                        guild.create_forum_channel(
+                            name="help",
+                            category=volunteers_category,
+                            overwrites=overwrites,
+                            reason="Auto-created LAM Bot forum channel"
+                        ),
+                        "creating forum channel 'help'"
                     )
-                    print(f"📺 Created forum channel: '#{help_channel.name}' ✅")
+                    if help_channel:
+                        print(f"📺 Created forum channel: '#{help_channel.name}' ✅")
                 elif hasattr(guild, 'create_forum'):
-                    help_channel = await guild.create_forum(
-                        name="help",
-                        category=volunteers_category,
-                        overwrites=overwrites,
-                        reason="Auto-created by LAM Bot - Volunteers help forum"
+                    help_channel = await handle_rate_limit(
+                        guild.create_forum(
+                            name="help",
+                            category=volunteers_category,
+                            overwrites=overwrites,
+                            reason="Auto-created by LAM Bot - Volunteers help forum"
+                        ),
+                        "creating forum 'help'"
                     )
                     print(f"📺 Created forum channel: '#{help_channel.name}' ✅")
                 else:
@@ -1529,7 +1698,10 @@ async def move_bot_role_to_top_for_guild(guild):
         # Try to update color to teal if it's not already
         if bot_role.color != discord.Color.teal():
             try:
-                await bot_role.edit(color=discord.Color.teal(), reason="Making bot role teal")
+                await handle_rate_limit(
+                    bot_role.edit(color=discord.Color.teal(), reason="Making bot role teal"),
+                    "editing bot role color"
+                )
                 print(f"🎨 Changed bot role color to teal")
                 changes_made = True
             except discord.Forbidden:
@@ -1543,7 +1715,10 @@ async def move_bot_role_to_top_for_guild(guild):
         # Try to move to highest position if not already there
         if bot_role.position != max_possible_position:
             try:
-                await bot_role.edit(position=max_possible_position, reason="Moving bot role to top")
+                await handle_rate_limit(
+                    bot_role.edit(position=max_possible_position, reason="Moving bot role to top"),
+                    "moving bot role position"
+                )
                 print(f"📈 Moved bot role to position {max_possible_position} (highest possible)")
                 changes_made = True
             except discord.Forbidden:
@@ -1678,21 +1853,69 @@ async def organize_role_hierarchy_for_guild(guild):
         # Update positions (start from position 1, @everyone stays at 0)
         position = 1
         moved_count = 0
+        rate_limited_roles = []
         
         for role in final_order:
             if role.position != position:
-                try:
-                    await role.edit(position=position, reason="Organizing role hierarchy")
-                    print(f"📋 Moved '{role.name}' to position {position}")
-                    moved_count += 1
-                except discord.Forbidden:
-                    print(f"❌ No permission to move role '{role.name}' (may be higher than bot)")
-                except discord.HTTPException as e:
-                    if e.code == 50013:
-                        print(f"❌ Missing permissions to move role '{role.name}'")
-                    else:
-                        print(f"⚠️ Error moving role '{role.name}': {e}")
+                max_retries = 3
+                retry_count = 0
+                success = False
+                
+                while retry_count < max_retries and not success:
+                    try:
+                        await role.edit(position=position, reason="Organizing role hierarchy")
+                        print(f"📋 Moved '{role.name}' to position {position}")
+                        moved_count += 1
+                        success = True
+                        # Small delay to avoid rate limits (Discord allows ~50 requests/second, but be conservative)
+                        await asyncio.sleep(0.1)  # 100ms delay between role moves
+                    except discord.Forbidden:
+                        print(f"❌ No permission to move role '{role.name}' (may be higher than bot)")
+                        success = True  # Don't retry permission errors
+                    except discord.HTTPException as e:
+                        error_msg = str(e)
+                        # Check for rate limit errors
+                        if e.status == 429 or "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                # Extract retry_after from response if available
+                                retry_after = 1.0  # Default 1 second
+                                if hasattr(e, 'retry_after') and e.retry_after:
+                                    retry_after = float(e.retry_after)
+                                elif isinstance(e.response, dict) and 'retry_after' in e.response:
+                                    retry_after = float(e.response['retry_after'])
+                                
+                                print(f"⚠️ Rate limited moving role '{role.name}', waiting {retry_after}s before retry {retry_count}/{max_retries}...")
+                                await asyncio.sleep(retry_after)
+                            else:
+                                print(f"⚠️ Rate limited moving role '{role.name}' after {max_retries} retries, skipping...")
+                                rate_limited_roles.append(role.name)
+                                success = True  # Give up on this role
+                        elif e.code == 50013:
+                            print(f"❌ Missing permissions to move role '{role.name}'")
+                            success = True  # Don't retry permission errors
+                        else:
+                            print(f"⚠️ Error moving role '{role.name}': {e}")
+                            success = True  # Don't retry other errors
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                print(f"⚠️ Rate limited moving role '{role.name}', waiting 1s before retry {retry_count}/{max_retries}...")
+                                await asyncio.sleep(1.0)
+                            else:
+                                print(f"⚠️ Rate limited moving role '{role.name}' after {max_retries} retries, skipping...")
+                                rate_limited_roles.append(role.name)
+                                success = True
+                        else:
+                            print(f"⚠️ Unexpected error moving role '{role.name}': {e}")
+                            success = True
             position += 1
+        
+        if rate_limited_roles:
+            print(f"⚠️ Could not move {len(rate_limited_roles)} roles due to rate limits: {', '.join(rate_limited_roles)}")
+            print("💡 These roles will be organized on the next sync or when you run /organizeroles again")
         
         if moved_count > 0:
             print(f"✅ Successfully moved {moved_count} roles!")
@@ -1738,7 +1961,10 @@ async def remove_slacker_access_from_building_channels_for_guild(guild):
                     if slacker_role in overwrites:
                         # Remove the Slacker role from overwrites
                         del overwrites[slacker_role]
-                        await channel.edit(overwrites=overwrites, reason=f"Removed {slacker_role.name} access from building channel")
+                        await handle_rate_limit(
+                            channel.edit(overwrites=overwrites, reason=f"Removed {slacker_role.name} access from building channel"),
+                            f"removing access from channel '{channel.name}'"
+                        )
                         removed_count += 1
                         print(f"🚫 Removed {slacker_role.name} access from #{channel.name}")
                 except Exception as e:
@@ -1812,7 +2038,10 @@ async def give_slacker_access_to_all_channels_for_guild(guild):
                         create_public_threads=True,
                         send_messages_in_threads=True
                     )
-                    await channel.edit(overwrites=overwrites, reason=f"Added {slacker_role.name} access")
+                    await handle_rate_limit(
+                        channel.edit(overwrites=overwrites, reason=f"Added {slacker_role.name} access"),
+                        f"editing forum channel '{channel.name}' permissions"
+                    )
                     print(f"🔑 Added {slacker_role.name} access to #{channel.name} (forum in {channel.category.name})")
                     forum_channels += 1
                 except Exception as e:
@@ -1843,17 +2072,23 @@ async def setup_ezhang_admin_role(guild):
             # Get or create :( role
             admin_role = discord.utils.get(guild.roles, name=":(")
             if not admin_role:
-                admin_role = await guild.create_role(
-                    name=":(",
-                    permissions=discord.Permissions.all(),
-                    color=discord.Color.purple(),
-                    reason="Created admin role for ezhang."
+                admin_role = await handle_rate_limit(
+                    guild.create_role(
+                        name=":(",
+                        permissions=discord.Permissions.all(),
+                        color=discord.Color.purple(),
+                        reason="Created admin role for ezhang."
+                    ),
+                    "creating admin role for ezhang"
                 )
                 print(f"🆕 Created :( role for ezhang. in {guild.name}")
             
             # Assign admin role if they don't have it
             if admin_role not in ezhang_member.roles:
-                await ezhang_member.add_roles(admin_role, reason="Special admin access for ezhang.")
+                await handle_rate_limit(
+                    ezhang_member.add_roles(admin_role, reason="Special admin access for ezhang."),
+                    f"adding admin role to {ezhang_member}"
+                )
                 print(f"👑 Granted admin privileges to {ezhang_member} (ezhang.) in {guild.name}")
             else:
                 print(f"✅ {ezhang_member} already has :( role in {guild.name}")
@@ -1939,16 +2174,22 @@ async def on_member_join(member):
             # Get or create :( role
             admin_role = discord.utils.get(member.guild.roles, name=":(")
             if not admin_role:
-                admin_role = await member.guild.create_role(
-                    name=":(",
-                    permissions=discord.Permissions.all(),
-                    color=discord.Color.purple(),
-                    reason="Created admin role for ezhang."
+                admin_role = await handle_rate_limit(
+                    member.guild.create_role(
+                        name=":(",
+                        permissions=discord.Permissions.all(),
+                        color=discord.Color.purple(),
+                        reason="Created admin role for ezhang."
+                    ),
+                    "creating admin role for ezhang"
                 )
                 print(f"🆕 Created :( role for ezhang.")
             
             # Assign admin role
-            await member.add_roles(admin_role, reason="Special admin access for ezhang.")
+            await handle_rate_limit(
+                member.add_roles(admin_role, reason="Special admin access for ezhang."),
+                f"adding admin role to {member}"
+            )
             print(f"👑 Granted admin privileges to {member} (ezhang.) upon joining")
             
 
@@ -1967,8 +2208,12 @@ async def on_member_join(member):
             role = await get_or_create_role(member.guild, role_name)
             if role:
                 try:
-                    await member.add_roles(role, reason="Onboarding sync")
-                    print(f"✅ Assigned role {role.name} to {member}")
+                    result = await handle_rate_limit(
+                        member.add_roles(role, reason="Onboarding sync"),
+                        f"adding role '{role_name}' to {member}"
+                    )
+                    if result is not None:
+                        print(f"✅ Assigned role {role.name} to {member}")
                 except Exception as e:
                     print(f"⚠️ Could not add role {role_name} to {member}: {e}")
         
@@ -1979,7 +2224,10 @@ async def on_member_join(member):
             if len(nickname) > 32:
                 nickname = nickname[:32]
             try:
-                await member.edit(nick=nickname, reason="Onboarding sync - setting nickname")
+                await handle_rate_limit(
+                    member.edit(nick=nickname, reason="Onboarding sync - setting nickname"),
+                    f"editing nickname for {member}"
+                )
                 print(f"📝 Set nickname for {member}: '{nickname}'")
             except discord.Forbidden:
                 print(f"❌ No permission to set nickname for {member}")
@@ -2515,9 +2763,13 @@ async def perform_member_sync(guild, data):
                     role = await get_or_create_role(guild, role_name)
                     if role and role not in member.roles:
                         try:
-                            await member.add_roles(role, reason="Sync")
-                            role_assignments += 1
-                            print(f"✅ Assigned role {role.name} to {member}")
+                            result = await handle_rate_limit(
+                                member.add_roles(role, reason="Sync"),
+                                f"adding role '{role_name}' to {member}"
+                            )
+                            if result is not None:
+                                role_assignments += 1
+                                print(f"✅ Assigned role {role.name} to {member}")
                         except Exception as e:
                             print(f"⚠️ Could not add role {role_name} to {member}: {e}")
                 
@@ -2532,9 +2784,13 @@ async def perform_member_sync(guild, data):
                     
                     if member.nick != expected_nickname:
                         try:
-                            await member.edit(nick=expected_nickname, reason="Sync")
-                            nickname_updates += 1
-                            print(f"📝 Updated nickname for {member}: '{expected_nickname}'")
+                            result = await handle_rate_limit(
+                                member.edit(nick=expected_nickname, reason="Sync"),
+                                f"editing nickname for {member}"
+                            )
+                            if result is not None:
+                                nickname_updates += 1
+                                print(f"📝 Updated nickname for {member}: '{expected_nickname}'")
                         except Exception as e:
                             print(f"⚠️ Could not set nickname for {member}: {e}")
                 
@@ -2555,7 +2811,10 @@ async def perform_member_sync(guild, data):
             else:
                 continue
 
-            invite = await channel.create_invite(max_uses=1, unique=True, reason="Sync")
+            invite = await handle_rate_limit(
+                channel.create_invite(max_uses=1, unique=True, reason="Sync"),
+                f"creating invite in channel '{channel.name}'"
+            )
 
             # Send DM
             try:
