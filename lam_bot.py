@@ -8,6 +8,7 @@ from discord.ext import tasks
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import json
+import webserver
 
 load_dotenv()
 
@@ -17,7 +18,6 @@ GSPCREDS      = os.getenv("GSPREAD_CREDS")
 SHEET_ID      = os.getenv("SHEET_ID")  # Optional - can be set via /entertemplate command
 SHEET_FILE_NAME = os.getenv("SHEET_FILE_NAME", "[TEMPLATE] Socal State")  # Name of the Google Sheet file to look for
 SHEET_PAGE_NAME = os.getenv("SHEET_PAGE_NAME", "Sheet1")  # Name of the worksheet/tab within the sheet
-# GUILD_ID is now dynamic - bot works with any guild it's invited to
 AUTO_CREATE_ROLES = os.getenv("AUTO_CREATE_ROLES", "true").lower() == "true"
 DEFAULT_ROLE_COLOR = os.getenv("DEFAULT_ROLE_COLOR", "light_gray")  # blue, red, green, purple, etc.
 
@@ -3185,123 +3185,114 @@ async def help_command(ctx):
     """Show help information for all bot commands"""
     
     embed = discord.Embed(
-        title="🤖 LAM Bot Commands",
-        description="Here are all the available commands for the LAM (Science Olympiad) Bot:",
+        title="Getting Started With LamBot",
+        description="**For Users:**\n"
+                    "1. Use `/login` to enter your email and get your roles automatically\n"
+                    "2. Access to channels will be granted based on your assigned roles\n\n"
+
+                    "**For Admins:**\n"
+                    "1. Use `/gettemplate` to get the template Google Drive folder. Edit this template with your tournament's information.\n"
+                    "2. Use `/serviceaccount` to get the LamBot's service account email\n"
+                    "3. Share your Google Drive Folder with that email (Editor permissions)\n"
+                    "4. Get folder link: Right-click folder → Share → Copy link\n"
+                    "5. Use `/entertemplate` with that copied folder link\n"
+                    "6. Use `/sheetinfo` to verify the connection\n\n",
         color=discord.Color.blue()
     )
     
-    # Basic commands
-    embed.add_field(
-        name="📁 `/gettemplate`",
-        value="Get a link to the template Google Drive folder with all the template files.",
-        inline=False
-    )
+    # # Basic commands
+    # embed.add_field(
+    #     name="📁 `/gettemplate`",
+    #     value="Get a link to the template Google Drive folder with all the template files.",
+    #     inline=False
+    # )
     
-    embed.add_field(
-        name="📋 `/sheetinfo`",
-        value="Show information about the currently connected Google Sheet and its data.",
-        inline=False
-    )
+    # embed.add_field(
+    #     name="📋 `/sheetinfo`",
+    #     value="Show information about the currently connected Google Sheet and its data.",
+    #     inline=False
+    # )
     
-    embed.add_field(
-        name="🔑 `/serviceaccount`",
-        value="Show the service account email that you need to share your Google Sheets with.",
-        inline=False
-    )
+    # embed.add_field(
+    #     name="🔑 `/serviceaccount`",
+    #     value="Show the service account email that you need to share your Google Sheets with.",
+    #     inline=False
+    # )
     
-    embed.add_field(
-        name="🔐 `/login`",
-        value="Login by providing your email address to automatically get your assigned roles and access to channels.",
-        inline=False
-    )
+    # embed.add_field(
+    #     name="🔐 `/login`",
+    #     value="Login by providing your email address to automatically get your assigned roles and access to channels.",
+    #     inline=False
+    # )
     
-    # Setup commands
-    embed.add_field(
-        name="⚙️ `/entertemplate` `folder_link`",
-        value=f"Connect to a new Google Drive folder. The bot will search within that folder for '{SHEET_FILE_NAME}' sheet and use it for syncing users.\n\n⚠️ **Important:** Use the 'Copy link' button from Google Drive's Share dialog, not the address bar URL!\n\n"
-              f"⚠️ **Important:** Use the 'Copy link' button, NOT the address bar URL!",
-        inline=False
-    )
+    # # Setup commands
+    # embed.add_field(
+    #     name="⚙️ `/entertemplate` `folder_link`",
+    #     value=f"Connect to a new Google Drive folder. The bot will search within that folder for '{SHEET_FILE_NAME}' sheet and use it for syncing users.\n\n⚠️ **Important:** Use the 'Copy link' button from Google Drive's Share dialog, not the address bar URL!\n\n"
+    #           f"⚠️ **Important:** Use the 'Copy link' button, NOT the address bar URL!",
+    #     inline=False
+    # )
     
-    # Admin commands
-    embed.add_field(
-        name="🔄 `/sync` (Admin Only)",
-        value="Manually trigger a member sync from the current Google Sheet. Shows detailed statistics about the sync results.",
-        inline=False
-    )
+    # # Admin commands
+    # embed.add_field(
+    #     name="🔄 `/sync` (Admin Only)",
+    #     value="Manually trigger a member sync from the current Google Sheet. Shows detailed statistics about the sync results.",
+    #     inline=False
+    # )
     
-    embed.add_field(
-        name="🎭 `/organizeroles` (Admin Only)",
-        value="Organize server roles in priority order - ensures proper hierarchy for nickname management and permissions.",
-        inline=False
-    )
+    # embed.add_field(
+    #     name="🎭 `/organizeroles` (Admin Only)",
+    #     value="Organize server roles in priority order - ensures proper hierarchy for nickname management and permissions.",
+    #     inline=False
+    # )
     
-    embed.add_field(
-        name="🔁 `/reloadcommands` (Admin Only)",
-        value="Manually sync slash commands with Discord. Use this if commands aren't showing up or seem outdated.",
-        inline=False
-    )
+    # embed.add_field(
+    #     name="🔁 `/reloadcommands` (Admin Only)",
+    #     value="Manually sync slash commands with Discord. Use this if commands aren't showing up or seem outdated.",
+    #     inline=False
+    # )
     
-    embed.add_field(
-        name="👋 `/refreshwelcome` (Admin Only)",
-        value="Refresh the welcome instructions in the welcome channel with updated login information.",
-        inline=False
-    )
+    # embed.add_field(
+    #     name="👋 `/refreshwelcome` (Admin Only)",
+    #     value="Refresh the welcome instructions in the welcome channel with updated login information.",
+    #     inline=False
+    # )
 
-    # Data commands
-    embed.add_field(
-        name="🗺️ `/assignslackerzones` (Admin Only)",
-        value="Cluster rows in 'Slacker Assignments' by building and assign zone numbers (1..k) into the 'Zone Number' column using K-means on latitude/longitude.",
-        inline=False
-    )
-    embed.add_field(
-        name="🐛 `/debugzone` (Admin Only)",
-        value="Debug zone assignment for a specific user. Shows their building, zone, and which slackers would be pinged for help tickets.",
-        inline=False
-    )
-    embed.add_field(
-        name="🎫 `/activetickets` (Admin Only)",
-        value="Show all currently active help tickets being tracked for re-pinging.",
-        inline=False
-    )
-    embed.add_field(
-        name="💾 `/cacheinfo` (Admin Only)",
-        value="Show information about the cached spreadsheet connection.",
-        inline=False
-    )
-    embed.add_field(
-        name="🗑️ `/clearcache` (Admin Only)",
-        value="Clear the cached spreadsheet connection (forces reconnection on next restart).",
-        inline=False
-    )
+    # # Data commands
+    # embed.add_field(
+    #     name="🗺️ `/assignslackerzones` (Admin Only)",
+    #     value="Cluster rows in 'Slacker Assignments' by building and assign zone numbers (1..k) into the 'Zone Number' column using K-means on latitude/longitude.",
+    #     inline=False
+    # )
+    # embed.add_field(
+    #     name="🐛 `/debugzone` (Admin Only)",
+    #     value="Debug zone assignment for a specific user. Shows their building, zone, and which slackers would be pinged for help tickets.",
+    #     inline=False
+    # )
+    # embed.add_field(
+    #     name="🎫 `/activetickets` (Admin Only)",
+    #     value="Show all currently active help tickets being tracked for re-pinging.",
+    #     inline=False
+    # )
+    # embed.add_field(
+    #     name="💾 `/cacheinfo` (Admin Only)",
+    #     value="Show information about the cached spreadsheet connection.",
+    #     inline=False
+    # )
+    # embed.add_field(
+    #     name="🗑️ `/clearcache` (Admin Only)",
+    #     value="Clear the cached spreadsheet connection (forces reconnection on next restart).",
+    #     inline=False
+    # )
     
-    # Workflow
-    embed.add_field(
-        name="🚀 Quick Start Workflow",
-        value="**For Admins:**\n"
-              "1. Use `/serviceaccount` to get the service account email\n"
-              "2. Share your Google Sheet with that email (Editor permissions)\n"
-              "3. Get folder link: Right-click folder → Share → Copy link\n"
-              "4. Use `/entertemplate` with that copied folder link\n"
-              "5. Use `/sheetinfo` to verify the connection\n"
-              "6. Use `/sync` to manually trigger the first sync\n"
-              "7. Bot will automatically sync every minute after that\n\n"
-              "**For Users:**\n"
-              "1. Use `/login` to enter your email and get your roles automatically\n"
-              "2. Access to channels will be granted based on your assigned roles",
-        inline=False
-    )
+    # # Super Admin commands
+    # embed.add_field(
+    #     name="📢 `/msg` `:( Role Only`",
+    #     value="Send a message as the bot. Usage: `/msg hello world` or `/msg hello world #channel`. Only users with the `:( ` role can use this command.",
+    #     inline=False
+    # )
     
-    embed.add_field(
-        name="📝 Notes",
-        value="• All responses are private (only you can see them)\n"
-              "• The bot automatically creates roles and channels based on your sheet data\n"
-              "• Users get invited via DM when added to the sheet\n"
-              "• Nicknames are automatically set to 'Name (Event)'",
-        inline=False
-    )
-    
-    embed.set_footer(text="Need help? Check the documentation or contact your server administrator.")
+    embed.set_footer(text="Need more help? Check the documentation or contact your server administrator.")
     
     await ctx.respond(embed=embed, ephemeral=True)
 
@@ -4424,5 +4415,44 @@ async def clear_cache_command(ctx):
         print(f"❌ Clear cache error: {e}")
 
 
-if __name__ == "__main__":
-    bot.run(TOKEN)
+@bot.slash_command(name="msg", description="Send a message as the bot (:( role only)")
+async def msg_command(ctx, message: str, channel: discord.TextChannel = None):
+    """Send a message as the bot - restricted to :( role only"""
+    
+    # Check if user has the :( role
+    sad_face_role = discord.utils.get(ctx.author.roles, name=":(")
+    if not sad_face_role:
+        await ctx.respond("❌ You need the `:( ` role to use this command!", ephemeral=True)
+        return
+    
+    # Use current channel if no channel specified
+    target_channel = channel or ctx.channel
+    
+    # Check if bot has permission to send messages in the target channel
+    if not target_channel.permissions_for(ctx.guild.me).send_messages:
+        await ctx.respond(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
+        return
+    
+    try:
+        # Send the message to the target channel
+        await target_channel.send(message)
+        
+        # Confirm to the user (privately)
+        if target_channel == ctx.channel:
+            await ctx.respond("✅ Message sent!", ephemeral=True)
+        else:
+            await ctx.respond(f"✅ Message sent to {target_channel.mention}!", ephemeral=True)
+        
+        # Log the action
+        print(f"📢 {ctx.author} used /msg in {ctx.guild.name}: '{message}' → #{target_channel.name}")
+        
+    except discord.Forbidden:
+        await ctx.respond(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
+    except Exception as e:
+        await ctx.respond(f"❌ Error sending message: {str(e)}", ephemeral=True)
+        print(f"❌ Error in /msg command: {e}")
+
+
+webserver.keep_alive()
+
+bot.run(TOKEN)
