@@ -38,12 +38,27 @@ class LamBot(commands.Bot):
         super().__init__(command_prefix='!', intents=intents)
     
     async def setup_hook(self):
-        # Sync commands globally
+        # Sync commands globally on startup (only once per bot instance)
+        # Discord rate limits global command syncing to once per hour, but this
+        # ensures commands are synced when the bot starts, preventing auto-sync
+        # attempts when commands are first used (which can cause rate limits)
         try:
             synced = await self.tree.sync()
             print(f"✅ Synced {len(synced)} commands globally")
+        except discord.app_commands.CommandSyncFailure as e:
+            error_msg = str(e)
+            if "429" in error_msg or "rate limit" in error_msg.lower() or "1015" in error_msg:
+                print(f"⚠️ Rate limited on startup sync (this is OK if synced recently): {error_msg}")
+                print("ℹ️ Commands may already be synced. If commands don't work, use /reloadcommands after waiting 1 hour")
+            else:
+                print(f"❌ Failed to sync commands: {e}")
         except Exception as e:
-            print(f"❌ Failed to sync commands: {e}")
+            error_msg = str(e)
+            if "429" in error_msg or "rate limit" in error_msg.lower() or "1015" in error_msg:
+                print(f"⚠️ Rate limited on startup sync (this is OK if synced recently): {error_msg}")
+                print("ℹ️ Commands may already be synced. If commands don't work, use /reloadcommands after waiting 1 hour")
+            else:
+                print(f"❌ Failed to sync commands: {e}")
 
 bot = LamBot()
 
@@ -3444,7 +3459,7 @@ async def reload_commands_command(interaction: discord.Interaction):
     
     try:
         print(f"🔄 Manual command sync triggered by {interaction.user}")
-        synced = await bot.sync_commands()
+        synced = await bot.tree.sync()
         
         embed = discord.Embed(
             title="✅ Commands Synced Successfully!",
@@ -3477,8 +3492,31 @@ async def reload_commands_command(interaction: discord.Interaction):
         embed.set_footer(text="Commands should now be available in Discord!")
         await interaction.followup.send(embed=embed, ephemeral=True)
             
+    except discord.app_commands.CommandSyncFailure as e:
+        error_msg = str(e)
+        if "429" in error_msg or "rate limit" in error_msg.lower() or "1015" in error_msg:
+            await interaction.followup.send(
+                "❌ **Rate Limited!**\n\n"
+                "Discord limits global command syncing to **once per hour**.\n"
+                "Please wait before trying again.\n\n"
+                f"Error: {error_msg}",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(f"❌ Error syncing commands: {error_msg}", ephemeral=True)
+        print(f"❌ Error syncing commands: {e}")
     except Exception as e:
-        await interaction.followup.send(f"❌ Error syncing commands: {str(e)}", ephemeral=True)
+        error_msg = str(e)
+        if "429" in error_msg or "rate limit" in error_msg.lower() or "1015" in error_msg:
+            await interaction.followup.send(
+                "❌ **Rate Limited!**\n\n"
+                "Discord limits global command syncing to **once per hour**.\n"
+                "Please wait before trying again.\n\n"
+                f"Error: {error_msg}",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(f"❌ Error syncing commands: {error_msg}", ephemeral=True)
         print(f"❌ Error syncing commands: {e}")
 
 # Modal for email input
