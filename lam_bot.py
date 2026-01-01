@@ -38,27 +38,18 @@ class LamBot(commands.Bot):
         super().__init__(command_prefix='!', intents=intents)
     
     async def setup_hook(self):
-        # Sync commands globally on startup (only once per bot instance)
-        # Discord rate limits global command syncing to once per hour, but this
-        # ensures commands are synced when the bot starts, preventing auto-sync
-        # attempts when commands are first used (which can cause rate limits)
-        try:
-            synced = await self.tree.sync()
-            print(f"✅ Synced {len(synced)} commands globally")
-        except discord.app_commands.CommandSyncFailure as e:
-            error_msg = str(e)
-            if "429" in error_msg or "rate limit" in error_msg.lower() or "1015" in error_msg:
-                print(f"⚠️ Rate limited on startup sync (this is OK if synced recently): {error_msg}")
-                print("ℹ️ Commands may already be synced. If commands don't work, use /reloadcommands after waiting 1 hour")
-            else:
-                print(f"❌ Failed to sync commands: {e}")
-        except Exception as e:
-            error_msg = str(e)
-            if "429" in error_msg or "rate limit" in error_msg.lower() or "1015" in error_msg:
-                print(f"⚠️ Rate limited on startup sync (this is OK if synced recently): {error_msg}")
-                print("ℹ️ Commands may already be synced. If commands don't work, use /reloadcommands after waiting 1 hour")
-            else:
-                print(f"❌ Failed to sync commands: {e}")
+        # Skip automatic command sync on startup to avoid rate limits
+        # Discord commands persist across bot restarts, so we don't need to sync every time.
+        # Discord rate limits global command syncing to once per hour.
+        # 
+        # Commands will work immediately if they were synced before. If commands don't work:
+        # 1. Wait at least 1 hour since last sync
+        # 2. Use /reloadcommands to manually sync
+        #
+        # This prevents 429 rate limit errors on startup, especially on Render where
+        # the bot may restart frequently.
+        print("ℹ️ Skipping automatic command sync on startup (commands persist across restarts)")
+        print("ℹ️ Use /reloadcommands to manually sync commands if needed (wait 1 hour between syncs)")
 
 bot = LamBot()
 
