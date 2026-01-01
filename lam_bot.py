@@ -36,20 +36,6 @@ intents.message_content = True
 class LamBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='!', intents=intents)
-    
-    async def setup_hook(self):
-        # Skip automatic command sync on startup to avoid rate limits
-        # Discord commands persist across bot restarts, so we don't need to sync every time.
-        # Discord rate limits global command syncing to once per hour.
-        # 
-        # Commands will work immediately if they were synced before. If commands don't work:
-        # 1. Wait at least 1 hour since last sync
-        # 2. Use /reloadcommands to manually sync
-        #
-        # This prevents 429 rate limit errors on startup, especially on Render where
-        # the bot may restart frequently.
-        print("ℹ️ Skipping automatic command sync on startup (commands persist across restarts)")
-        print("ℹ️ Use /reloadcommands to manually sync commands if needed (wait 1 hour between syncs)")
 
 bot = LamBot()
 
