@@ -15,8 +15,8 @@ load_dotenv()
 
 TOKEN         = os.getenv("DISCORD_TOKEN")
 SERVICE_EMAIL = os.getenv("SERVICE_EMAIL")
-# GSPCREDS      = os.getenv("GSPREAD_CREDS")
-GSPCREDS      = "/etc/secrets/gspread_creds.json"
+GSPCREDS      = os.getenv("GSPREAD_CREDS")
+# GSPCREDS      = "/etc/secrets/gspread_creds.json"
 SHEET_ID      = os.getenv("SHEET_ID")  # Optional - can be set via /entertemplate command
 SHEET_FILE_NAME = os.getenv("SHEET_FILE_NAME", "[TEMPLATE] Socal State")  # Name of the Google Sheet file to look for
 SHEET_PAGE_NAME = os.getenv("SHEET_PAGE_NAME", "Sheet1")  # Name of the worksheet/tab within the sheet
