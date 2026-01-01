@@ -4739,13 +4739,4 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
 webserver.keep_alive()
 
 if __name__ == "__main__":
-    try:
-        print("🚀 Starting Discord bot...")
-        bot.run(TOKEN, reconnect=True)
-    except KeyboardInterrupt:
-        print("🛑 Bot stopped by user")
-    except Exception as e:
-        print(f"❌ Fatal error: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
+    bot.run(TOKEN)
