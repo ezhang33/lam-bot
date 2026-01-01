@@ -9,12 +9,14 @@ from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import json
+import base64
 
 load_dotenv()
 
 TOKEN         = os.getenv("DISCORD_TOKEN")
 SERVICE_EMAIL = os.getenv("SERVICE_EMAIL")
 GSPCREDS      = os.getenv("GSPREAD_CREDS")
+GSPCREDS      = json.loads(base64.b64decode(GSPCREDS).decode('utf-8'))
 # GSPCREDS      = "/etc/secrets/gspread_creds.json"
 SHEET_ID      = os.getenv("SHEET_ID")  # Optional - can be set via /entertemplate command
 SHEET_FILE_NAME = os.getenv("SHEET_FILE_NAME", "[TEMPLATE] Socal State")  # Name of the Google Sheet file to look for
