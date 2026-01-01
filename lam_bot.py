@@ -4734,9 +4734,6 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
         await interaction.response.send_message(f"❌ Error sending message: {str(e)}", ephemeral=True)
         print(f"❌ Error in /msg command: {e}")
 
-
-# Start webserver to keep the service alive on Render
-webserver.keep_alive()
-
 if __name__ == "__main__":
+    webserver.keep_alive()
     bot.run(TOKEN)
