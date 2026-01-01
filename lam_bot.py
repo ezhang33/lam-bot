@@ -2796,76 +2796,76 @@ async def perform_member_sync(guild, data):
                 
             continue
 
-        # User not in server - send invite
-        try:
-            user = await bot.fetch_user(discord_id)
+        # # User not in server - send invite
+        # try:
+        #     user = await bot.fetch_user(discord_id)
             
-            # Create invite
-            welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
-            if welcome_channel:
-                channel = welcome_channel
-            elif guild.system_channel:
-                channel = guild.system_channel
-            elif guild.text_channels:
-                channel = guild.text_channels[0]
-            else:
-                continue
+        #     # Create invite
+        #     welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
+        #     if welcome_channel:
+        #         channel = welcome_channel
+        #     elif guild.system_channel:
+        #         channel = guild.system_channel
+        #     elif guild.text_channels:
+        #         channel = guild.text_channels[0]
+        #     else:
+        #         continue
 
-            invite = await handle_rate_limit(
-                channel.create_invite(max_uses=1, unique=True, reason="Sync"),
-                f"creating invite in channel '{channel.name}'"
-            )
+        #     invite = await handle_rate_limit(
+        #         channel.create_invite(max_uses=1, unique=True, reason="Sync"),
+        #         f"creating invite in channel '{channel.name}'"
+        #     )
 
-            # Send DM
-            try:
-                await user.send(
-                    f"Hi {user.name}! 👋\n"
-                    f"You've been added to **{guild.name}** by the Science Olympiad planning team.\n"
-                    f"Click here to join: {invite.url}"
-                )
-                invited_count += 1
-                print(f"✉️ Sent invite to {user} ({discord_id})")
-            except discord.Forbidden:
-                print(f"❌ Cannot DM user {discord_id}; they may have DMs off.")
+        #     # Send DM
+        #     try:
+        #         await user.send(
+        #             f"Hi {user.name}! 👋\n"
+        #             f"You've been added to **{guild.name}** by the Science Olympiad planning team.\n"
+        #             f"Click here to join: {invite.url}"
+        #         )
+        #         invited_count += 1
+        #         print(f"✉️ Sent invite to {user} ({discord_id})")
+        #     except discord.Forbidden:
+        #         print(f"❌ Cannot DM user {discord_id}; they may have DMs off.")
 
-            # Store pending role assignments
-            roles_to_queue = []
-            master_role = str(row.get("Master Role", "")).strip()
-            if master_role:
-                roles_to_queue.append(master_role)
+        #     # Store pending role assignments
+        #     roles_to_queue = []
+        #     master_role = str(row.get("Master Role", "")).strip()
+        #     if master_role:
+        #         roles_to_queue.append(master_role)
             
-            first_event = str(row.get("First Event", "")).strip()
-            if first_event:
-                roles_to_queue.append(first_event)
+        #     first_event = str(row.get("First Event", "")).strip()
+        #     if first_event:
+        #         roles_to_queue.append(first_event)
             
-            secondary_role = str(row.get("Secondary Role", "")).strip()
-            if secondary_role:
-                roles_to_queue.append(secondary_role)
+        #     secondary_role = str(row.get("Secondary Role", "")).strip()
+        #     if secondary_role:
+        #         roles_to_queue.append(secondary_role)
             
-            chapter = str(row.get("Chapter", "")).strip()
-            if chapter and chapter.lower() not in ["n/a", "na", ""]:
-                roles_to_queue.append(chapter)
-                # Add to chapter role names set
-                chapter_role_names.add(chapter)
-            else:
-                roles_to_queue.append("Unaffiliated")
-                # Unaffiliated is also a chapter role
-                chapter_role_names.add("Unaffiliated")
+        #     chapter = str(row.get("Chapter", "")).strip()
+        #     if chapter and chapter.lower() not in ["n/a", "na", ""]:
+        #         roles_to_queue.append(chapter)
+        #         # Add to chapter role names set
+        #         chapter_role_names.add(chapter)
+        #     else:
+        #         roles_to_queue.append("Unaffiliated")
+        #         # Unaffiliated is also a chapter role
+        #         chapter_role_names.add("Unaffiliated")
             
 
             
-            if roles_to_queue:
-                sheet_name = str(row.get("Name", "")).strip()
-                user_name = sheet_name if sheet_name else user.name
+        #     if roles_to_queue:
+        #         sheet_name = str(row.get("Name", "")).strip()
+        #         user_name = sheet_name if sheet_name else user.name
                 
-                pending_users[discord_id] = {
-                    "roles": roles_to_queue,
-                    "name": user_name,
-                    "first_event": first_event
-                }
+        #         pending_users[discord_id] = {
+        #             "roles": roles_to_queue,
+        #             "name": user_name,
+        #             "first_event": first_event
+        #         }
                         
-        except Exception as e:
-            print(f"❌ Error processing user {discord_id}: {e}")
+        # except Exception as e:
+        #     print(f"❌ Error processing user {discord_id}: {e}")
     
     # Organize role hierarchy after sync
     await organize_role_hierarchy_for_guild(guild)
