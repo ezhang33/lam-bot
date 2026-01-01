@@ -9,7 +9,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import json
-import webserver
 
 load_dotenv()
 
@@ -4735,5 +4734,4 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
         print(f"❌ Error in /msg command: {e}")
 
 if __name__ == "__main__":
-    webserver.keep_alive()
     bot.run(TOKEN)
