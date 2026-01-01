@@ -15,8 +15,8 @@ load_dotenv()
 
 TOKEN         = os.getenv("DISCORD_TOKEN")
 SERVICE_EMAIL = os.getenv("SERVICE_EMAIL")
-GSPCREDS_B64  = os.getenv("GSPREAD_CREDS")
-GSPCREDS      = json.loads(base64.b64decode(GSPCREDS_B64).decode('utf-8'))
+GSPCREDSB64  = os.getenv("GSPREAD_CREDS")
+GSPCREDS      = json.loads(base64.b64decode(GSPCREDSB64).decode('utf-8'))
 # GSPCREDS      = "/etc/secrets/gspread_creds.json"
 SHEET_ID      = os.getenv("SHEET_ID")  # Optional - can be set via /entertemplate command
 SHEET_FILE_NAME = os.getenv("SHEET_FILE_NAME", "[TEMPLATE] Socal State")  # Name of the Google Sheet file to look for
@@ -40,8 +40,13 @@ class LamBot(commands.Bot):
 
 bot = LamBot()
 
-# Set up gspread client
-gc = gspread.service_account_from_dict(GSPCREDS)
+# Set up gspread client and credentials for Drive API
+scope = [
+    "https://www.googleapis.com/auth/spreadsheets",  # Full spreadsheet access (read & write)
+    "https://www.googleapis.com/auth/drive.readonly"  # Needed to search for sheets
+]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(GSPCREDS, scope)
+gc = gspread.authorize(creds)
 
 # Sheet connection is now handled dynamically via /entertemplate command only
 sheet = None
