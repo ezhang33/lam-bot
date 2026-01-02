@@ -2862,6 +2862,8 @@ async def perform_member_sync(guild, data):
 @bot.tree.command(name="gettemplate", description="Get a link to the template Google Drive folder")
 async def get_template_command(interaction: discord.Interaction):
     """Provide a link to the template Google Drive folder"""
+    await interaction.response.defer(ephemeral=True)
+    
     template_url = "https://drive.google.com/drive/folders/1drRK7pSdCpbqzJfaDhFtKlYUrf_uYsN8?usp=sharing"
     
     embed = discord.Embed(
@@ -2888,7 +2890,7 @@ async def get_template_command(interaction: discord.Interaction):
     
     embed.set_footer(text="Use these templates for your Science Olympiad events")
     
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="entertemplate", description="Set a new template Google Drive folder to sync users from")
 @app_commands.describe(folder_link="Google Drive folder link (use 'Copy link' from Share dialog)")
@@ -3285,67 +3287,79 @@ async def sync_command(interaction: discord.Interaction):
 async def sheet_info_command(interaction: discord.Interaction):
     """Show information about the currently connected sheet"""
     
-    # Defer immediately since we'll be making API calls
-    await interaction.response.defer(ephemeral=True)
-    
-    if sheet is None:
-        embed = discord.Embed(
-            title="📋 No Sheet Connected",
-            description="No Google Sheet is currently connected to the bot.\n\n"
-                       f"Use `/entertemplate` to connect to a Google Drive folder with a '{SHEET_FILE_NAME}' sheet.",
-            color=discord.Color.orange()
-        )
-        embed.add_field(name="💡 How to Connect", value="1. Use `/entertemplate` command\n2. Paste your Google Drive folder link\n3. Bot will find and connect to the sheet", inline=False)
-    else:
-        try:
-            # Get sheet info
-            data = sheet.get_all_records()
-            
+    try:
+        # Defer immediately since we'll be making API calls
+        await interaction.response.defer(ephemeral=True)
+        
+        if sheet is None:
             embed = discord.Embed(
-                title="📋 Current Sheet Information",
-                description=f"**Spreadsheet:** {spreadsheet.title}\n"
-                           f"**Worksheet:** {sheet.title}\n"
-                           f"**Rows:** {len(data)} users",
-                color=discord.Color.green()
+                title="📋 No Sheet Connected",
+                description="No Google Sheet is currently connected to the bot.\n\n"
+                           f"Use `/entertemplate` to connect to a Google Drive folder with a '{SHEET_FILE_NAME}' sheet.",
+                color=discord.Color.orange()
             )
-            
-            # Show available worksheets
+            embed.add_field(name="💡 How to Connect", value="1. Use `/entertemplate` command\n2. Paste your Google Drive folder link\n3. Bot will find and connect to the sheet", inline=False)
+        else:
             try:
-                available_worksheets = [ws.title for ws in spreadsheet.worksheets()]
-                if len(available_worksheets) > 1:
-                    embed.add_field(
-                        name="📄 Available Worksheets", 
-                        value="\n".join([f"• {ws}" + (" ✅" if ws == sheet.title else "") for ws in available_worksheets]), 
-                        inline=False
-                    )
-            except Exception:
-                pass
-            
-            # Add some sample data if available
-            if data:
-                sample_user = data[0]
-                fields_preview = []
-                for key, value in sample_user.items():
-                    if key and value:  # Only show non-empty fields
-                        fields_preview.append(f"• {key}")
-                        if len(fields_preview) >= 5:  # Limit to 5 fields
-                            break
+                # Get sheet info
+                data = sheet.get_all_records()
                 
-                if fields_preview:
-                    embed.add_field(name="📊 Available Fields", value="\n".join(fields_preview), inline=False)
-            
-            embed.add_field(name="🔄 Sync Status", value="Syncing every minute automatically", inline=False)
-            embed.set_footer(text="Use /sync to manually trigger a sync")
-            
-        except Exception as e:
-            embed = discord.Embed(
-                title="⚠️ Sheet Connection Error",
-                description=f"Connected to sheet but cannot access data:\n```{str(e)}```",
-                color=discord.Color.red()
-            )
-            embed.add_field(name="💡 Suggestion", value="Try using `/entertemplate` to reconnect to the sheet", inline=False)
-    
-    await interaction.followup.send(embed=embed, ephemeral=True)
+                embed = discord.Embed(
+                    title="📋 Current Sheet Information",
+                    description=f"**Spreadsheet:** {spreadsheet.title}\n"
+                               f"**Worksheet:** {sheet.title}\n"
+                               f"**Rows:** {len(data)} users",
+                    color=discord.Color.green()
+                )
+                
+                # Show available worksheets
+                try:
+                    available_worksheets = [ws.title for ws in spreadsheet.worksheets()]
+                    if len(available_worksheets) > 1:
+                        embed.add_field(
+                            name="📄 Available Worksheets", 
+                            value="\n".join([f"• {ws}" + (" ✅" if ws == sheet.title else "") for ws in available_worksheets]), 
+                            inline=False
+                        )
+                except Exception:
+                    pass
+                
+                # Add some sample data if available
+                if data:
+                    sample_user = data[0]
+                    fields_preview = []
+                    for key, value in sample_user.items():
+                        if key and value:  # Only show non-empty fields
+                            fields_preview.append(f"• {key}")
+                            if len(fields_preview) >= 5:  # Limit to 5 fields
+                                break
+                    
+                    if fields_preview:
+                        embed.add_field(name="📊 Available Fields", value="\n".join(fields_preview), inline=False)
+                
+                embed.add_field(name="🔄 Sync Status", value="Syncing every minute automatically", inline=False)
+                embed.set_footer(text="Use /sync to manually trigger a sync")
+                
+            except Exception as e:
+                embed = discord.Embed(
+                    title="⚠️ Sheet Connection Error",
+                    description=f"Connected to sheet but cannot access data:\n```{str(e)}```",
+                    color=discord.Color.red()
+                )
+                embed.add_field(name="💡 Suggestion", value="Try using `/entertemplate` to reconnect to the sheet", inline=False)
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        # Catch any errors including defer failures
+        print(f"❌ Error in sheetinfo command: {e}")
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"❌ Error: {str(e)}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ Error: {str(e)}", ephemeral=True)
+        except Exception as followup_error:
+            print(f"❌ Could not send error message: {followup_error}")
 
 def _run_kmeans_clustering(points, k, max_iterations=100):
 	"""Run a simple K-means clustering on 2D points.
@@ -3441,6 +3455,7 @@ def _run_kmeans_clustering(points, k, max_iterations=100):
 @bot.tree.command(name="help", description="Show all available bot commands and how to use them")
 async def help_command(interaction: discord.Interaction):
     """Show help information for all bot commands"""
+    await interaction.response.defer(ephemeral=True)
     
     embed = discord.Embed(
         title="Getting Started With LamBot",
@@ -3552,11 +3567,12 @@ async def help_command(interaction: discord.Interaction):
     
     embed.set_footer(text="Need more help? Check the documentation or contact your server administrator.")
     
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="serviceaccount", description="Show the service account email for sharing Google Sheets")
 async def service_account_command(interaction: discord.Interaction):
     """Show the service account email that needs access to Google Sheets"""
+    await interaction.response.defer(ephemeral=True)
     
     embed = discord.Embed(
         title="🔑 Service Account Information",
@@ -3589,7 +3605,7 @@ async def service_account_command(interaction: discord.Interaction):
     
     embed.set_footer(text="The service account only needs 'Editor' permissions to read your data")
     
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 
@@ -4705,10 +4721,13 @@ async def clear_cache_command(interaction: discord.Interaction):
 async def msg_command(interaction: discord.Interaction, message: str, channel: discord.TextChannel = None):
     """Send a message as the bot - restricted to :( role only"""
     
+    # Defer immediately to prevent timeout
+    await interaction.response.defer(ephemeral=True)
+    
     # Check if user has the :( role
     sad_face_role = discord.utils.get(interaction.user.roles, name=":(")
     if not sad_face_role:
-        await interaction.response.send_message("❌ You need the `:( ` role to use this command!", ephemeral=True)
+        await interaction.followup.send("❌ You need the `:( ` role to use this command!", ephemeral=True)
         return
     
     # Use current channel if no channel specified
@@ -4716,7 +4735,7 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
     
     # Check if bot has permission to send messages in the target channel
     if not target_channel.permissions_for(interaction.guild.me).send_messages:
-        await interaction.response.send_message(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
+        await interaction.followup.send(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
         return
     
     try:
@@ -4725,25 +4744,17 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
         
         # Confirm to the user (privately)
         if target_channel == interaction.channel:
-            await interaction.response.send_message("✅ Message sent!", ephemeral=True)
+            await interaction.followup.send("✅ Message sent!", ephemeral=True)
         else:
-            await interaction.response.send_message(f"✅ Message sent to {target_channel.mention}!", ephemeral=True)
+            await interaction.followup.send(f"✅ Message sent to {target_channel.mention}!", ephemeral=True)
         
         # Log the action
         print(f"📢 {interaction.user} used /msg in {interaction.guild.name}: '{message}' → #{target_channel.name}")
         
     except discord.Forbidden:
-        # Only respond if we haven't already responded
-        if not interaction.response.is_done():
-            await interaction.response.send_message(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
-        else:
-            await interaction.followup.send(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
+        await interaction.followup.send(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
     except Exception as e:
-        # Only respond if we haven't already responded
-        if not interaction.response.is_done():
-            await interaction.response.send_message(f"❌ Error sending message: {str(e)}", ephemeral=True)
-        else:
-            await interaction.followup.send(f"❌ Error sending message: {str(e)}", ephemeral=True)
+        await interaction.followup.send(f"❌ Error sending message: {str(e)}", ephemeral=True)
         print(f"❌ Error in /msg command: {e}")
 
 if __name__ == "__main__":
