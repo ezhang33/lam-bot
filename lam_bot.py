@@ -48,13 +48,14 @@ scope = [
 creds = ServiceAccountCredentials.from_json_keyfile_dict(GSPCREDS, scope)
 gc = gspread.authorize(creds)
 
-# Sheet connection is now handled dynamically via /entertemplate command only
-sheet = None
-spreadsheet = None
+# Sheet connections are now per-guild (per-server)
+# Each Discord server can have its own Google Sheet connection
+sheets = {}  # guild_id -> worksheet object
+spreadsheets = {}  # guild_id -> spreadsheet object
 
 # Note: SHEET_ID is still available as environment variable but won't auto-connect
 # Use /entertemplate command to connect to sheets dynamically
-print("📋 Bot starting - will attempt to load cached sheet connection or use /entertemplate command")
+print("📋 Bot starting - will attempt to load cached sheet connections or use /entertemplate command")
 
 # Store pending role assignments and user info for users who haven't joined yet
 pending_users = {}  # Changed from pending_roles to store more info
@@ -103,34 +104,77 @@ def clear_cache():
     except Exception as e:
         print(f"❌ Error clearing cache: {e}")
 
-async def load_spreadsheet_from_cache():
-    """Try to load spreadsheet connection from cache"""
-    global sheet, spreadsheet
+async def load_spreadsheets_from_cache():
+    """Try to load all guild spreadsheet connections from cache"""
+    global sheets, spreadsheets
     
     cache = load_cache()
-    spreadsheet_id = cache.get("spreadsheet_id")
-    worksheet_name = cache.get("worksheet_name", SHEET_PAGE_NAME)
+    guilds_cache = cache.get("guilds", {})
     
-    if not spreadsheet_id:
-        print("📋 No cached spreadsheet connection found")
+    if not guilds_cache:
+        print("📋 No cached spreadsheet connections found")
         return False
     
-    try:
-        print(f"🔄 Attempting to connect to cached spreadsheet: {spreadsheet_id}")
-        spreadsheet = gc.open_by_key(spreadsheet_id)
-        sheet = spreadsheet.worksheet(worksheet_name)
+    success_count = 0
+    for guild_id_str, guild_cache in guilds_cache.items():
+        guild_id = int(guild_id_str)
+        spreadsheet_id = guild_cache.get("spreadsheet_id")
+        worksheet_name = guild_cache.get("worksheet_name", SHEET_PAGE_NAME)
         
-        # Test the connection by getting the first row
-        headers = sheet.row_values(1)
-        print(f"✅ Successfully connected to cached spreadsheet: '{spreadsheet.title}'")
-        print(f"📊 Worksheet: '{sheet.title}' with {len(headers)} columns")
+        if not spreadsheet_id:
+            continue
+        
+        try:
+            print(f"🔄 Attempting to connect to cached spreadsheet for guild {guild_id}: {spreadsheet_id}")
+            spreadsheet = gc.open_by_key(spreadsheet_id)
+            sheet = spreadsheet.worksheet(worksheet_name)
+            
+            # Test the connection by getting the first row
+            headers = sheet.row_values(1)
+            
+            # Store in per-guild dictionaries
+            spreadsheets[guild_id] = spreadsheet
+            sheets[guild_id] = sheet
+            
+            print(f"✅ Successfully connected to cached spreadsheet for guild {guild_id}: '{spreadsheet.title}'")
+            print(f"📊 Worksheet: '{sheet.title}' with {len(headers)} columns")
+            success_count += 1
+            
+        except Exception as e:
+            print(f"❌ Failed to connect to cached spreadsheet for guild {guild_id}: {e}")
+    
+    if success_count > 0:
+        print(f"✅ Loaded {success_count} cached spreadsheet connection(s)")
         return True
-        
-    except Exception as e:
-        print(f"❌ Failed to connect to cached spreadsheet: {e}")
-        print("🧹 Clearing invalid cache...")
-        clear_cache()
+    else:
+        print("❌ No cached connections could be loaded")
         return False
+
+def save_guild_spreadsheet_to_cache(guild_id, spreadsheet_id, worksheet_name):
+    """Save a guild's spreadsheet connection to cache"""
+    cache = load_cache()
+    
+    if "guilds" not in cache:
+        cache["guilds"] = {}
+    
+    cache["guilds"][str(guild_id)] = {
+        "spreadsheet_id": spreadsheet_id,
+        "worksheet_name": worksheet_name
+    }
+    
+    save_cache(cache)
+    print(f"💾 Cached spreadsheet connection for guild {guild_id}")
+
+def clear_guild_cache(guild_id):
+    """Clear a specific guild's cache"""
+    cache = load_cache()
+    
+    if "guilds" in cache and str(guild_id) in cache["guilds"]:
+        del cache["guilds"][str(guild_id)]
+        save_cache(cache)
+        print(f"🧹 Cleared cache for guild {guild_id}")
+        return True
+    return False
 
 async def handle_rate_limit(coro, operation_name, max_retries=3, default_delay=0.1):
     """
@@ -577,12 +621,15 @@ async def search_and_share_test_folder(guild, role_name):
     try:
         print(f"🔍 DEBUG: Starting search for test materials for event: {role_name}")
         
+        guild_id = guild.id
+        
         # Check if we have a connected spreadsheet to get the folder ID
-        if not spreadsheet:
-            print(f"❌ DEBUG: No spreadsheet connected, cannot search for test folder for {role_name}")
+        if guild_id not in spreadsheets:
+            print(f"❌ DEBUG: No spreadsheet connected for guild {guild_id}, cannot search for test folder for {role_name}")
             return
         
-        print(f"✅ DEBUG: Spreadsheet connected, ID: {spreadsheet.id}")
+        guild_spreadsheet = spreadsheets[guild_id]
+        print(f"✅ DEBUG: Spreadsheet connected, ID: {guild_spreadsheet.id}")
         
         # Import Drive API
         from googleapiclient.discovery import build
@@ -591,7 +638,7 @@ async def search_and_share_test_folder(guild, role_name):
         drive_service = build('drive', 'v3', credentials=creds)
         
         # Get the parent folder ID of the connected spreadsheet
-        sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
+        sheet_metadata = drive_service.files().get(fileId=guild_spreadsheet.id, fields='parents').execute()
         parent_folders = sheet_metadata.get('parents', [])
         
         if not parent_folders:
@@ -907,14 +954,16 @@ async def sort_chapter_channels_alphabetically(guild):
 async def search_and_share_useful_links(guild):
     """Search for Useful Links folder and share with volunteers"""
     try:
-        print(f"🔍 DEBUG: Searching for Useful Links folder")
+        guild_id = guild.id
+        print(f"🔍 DEBUG: Searching for Useful Links folder for guild {guild_id}")
         
         # Check if we have a connected spreadsheet to get the folder ID
-        if not spreadsheet:
-            print(f"❌ DEBUG: No spreadsheet connected, cannot search for Useful Links folder")
+        if guild_id not in spreadsheets:
+            print(f"❌ DEBUG: No spreadsheet connected for guild {guild_id}, cannot search for Useful Links folder")
             return
         
-        print(f"✅ DEBUG: Spreadsheet connected, ID: {spreadsheet.id}")
+        guild_spreadsheet = spreadsheets[guild_id]
+        print(f"✅ DEBUG: Spreadsheet connected, ID: {guild_spreadsheet.id}")
         
         # Import Drive API
         from googleapiclient.discovery import build
@@ -923,7 +972,7 @@ async def search_and_share_useful_links(guild):
         drive_service = build('drive', 'v3', credentials=creds)
         
         # Get the parent folder ID of the connected spreadsheet
-        sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
+        sheet_metadata = drive_service.files().get(fileId=guild_spreadsheet.id, fields='parents').execute()
         parent_folders = sheet_metadata.get('parents', [])
         
         if not parent_folders:
@@ -1115,7 +1164,7 @@ async def send_building_welcome_message(guild, building_chat, building):
     
     try:
         # Get all events in this building
-        building_events = await get_building_events(building)
+        building_events = await get_building_events(guild.id, building)
         
         if not building_events:
             print(f"⚠️ No events found for building '{building}', skipping welcome message")
@@ -2108,13 +2157,13 @@ async def on_ready():
         except Exception as e:
             print(f"❌ Error setting up guild {guild.name}: {e}")
     
-    # Try to load spreadsheet from cache
-    print("\n💾 Attempting to load cached spreadsheet connection...")
-    cache_loaded = await load_spreadsheet_from_cache()
+    # Try to load spreadsheet connections from cache (per-guild)
+    print("\n💾 Attempting to load cached spreadsheet connections...")
+    cache_loaded = await load_spreadsheets_from_cache()
     if cache_loaded:
-        print("✅ Successfully loaded spreadsheet from cache!")
+        print("✅ Successfully loaded spreadsheet connections from cache!")
     else:
-        print("📋 No cached connection available - use /entertemplate to connect to a sheet")
+        print("📋 No cached connections available - use /entertemplate to connect to a sheet")
     
     print("🔄 Starting member sync task...")
     sync_members.start()
@@ -2216,15 +2265,15 @@ async def on_member_join(member):
         del pending_users[member.id]
 
 
-async def get_user_event_building(discord_id):
+async def get_user_event_building(guild_id, discord_id):
     """Look up a user's event and building from the main sheet"""
-    global spreadsheet
-    if not spreadsheet:
-        print("❌ No spreadsheet connected for user lookup")
+    if guild_id not in spreadsheets:
+        print(f"❌ No spreadsheet connected for guild {guild_id}")
         return None
     
     try:
         # Get the main worksheet
+        spreadsheet = spreadsheets[guild_id]
         sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
         data = sheet.get_all_records()
         
@@ -2260,15 +2309,15 @@ async def get_user_event_building(discord_id):
         return None
 
 
-async def get_building_events(building):
+async def get_building_events(guild_id, building):
     """Get all events and rooms for a specific building from the main sheet"""
-    global spreadsheet
-    if not spreadsheet:
-        print("❌ No spreadsheet connected for building events lookup")
+    if guild_id not in spreadsheets:
+        print(f"❌ No spreadsheet connected for guild {guild_id}")
         return []
     
     try:
         # Get the main worksheet
+        spreadsheet = spreadsheets[guild_id]
         sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
         data = sheet.get_all_records()
         
@@ -2296,14 +2345,15 @@ async def get_building_events(building):
         return []
 
 
-async def get_building_zone(building):
+async def get_building_zone(guild_id, building):
     """Get the zone number for a building from the Slacker Assignments sheet"""
-    global spreadsheet
-    if not spreadsheet:
-        print("❌ No spreadsheet connected for building zone lookup")
+    if guild_id not in spreadsheets:
+        print(f"❌ No spreadsheet connected for guild {guild_id}")
         return None
     
     try:
+        spreadsheet = spreadsheets[guild_id]
+        
         # Try to get the Slacker Assignments worksheet
         try:
             sheet = spreadsheet.worksheet("Slacker Assignments")
@@ -2362,14 +2412,15 @@ async def get_building_zone(building):
         return None
 
 
-async def get_zone_slackers(zone):
+async def get_zone_slackers(guild_id, zone):
     """Get all Discord IDs of slackers assigned to a specific zone"""
-    global spreadsheet
-    if not spreadsheet:
-        print("❌ No spreadsheet connected for zone slackers lookup")
+    if guild_id not in spreadsheets:
+        print(f"❌ No spreadsheet connected for guild {guild_id}")
         return []
     
     try:
+        spreadsheet = spreadsheets[guild_id]
+        
         # Try to get the Slacker Assignments worksheet
         try:
             sheet = spreadsheet.worksheet("Slacker Assignments")
@@ -2474,7 +2525,8 @@ async def on_thread_create(thread):
                 return
             
             # Look up the user's event and building
-            user_event_info = await get_user_event_building(ticket_creator.id)
+            guild_id = thread.guild.id
+            user_event_info = await get_user_event_building(guild_id, ticket_creator.id)
             if not user_event_info:
                 print(f"⚠️ Could not find event/building info for user {ticket_creator}")
                 return
@@ -2491,7 +2543,7 @@ async def on_thread_create(thread):
             print(f"🏢 User {ticket_creator} is in building '{building}'{room_text} for event '{event}'")
             
             # Get the zone for this building
-            zone = await get_building_zone(building)
+            zone = await get_building_zone(guild_id, building)
             if not zone:
                 print(f"⚠️ No zone found for building '{building}'")
                 return
@@ -2499,7 +2551,7 @@ async def on_thread_create(thread):
             print(f"🗺️ Building '{building}' is in zone {zone}")
             
             # Get all slackers in this zone
-            zone_slackers = await get_zone_slackers(zone)
+            zone_slackers = await get_zone_slackers(guild_id, zone)
             if not zone_slackers:
                 print(f"⚠️ No slackers found for zone {zone}")
                 return
@@ -2582,9 +2634,11 @@ async def on_message(message):
             # If this ticket has reached final ping stage (ping_count >= 3), 
             # also accept responses from ANY slacker
             elif ticket_info["ping_count"] >= 3:
-                all_slacker_ids = await get_all_slackers()
-                if message.author.id in all_slacker_ids:
-                    is_slacker = True
+                guild_id = message.guild.id if message.guild else None
+                if guild_id:
+                    all_slacker_ids = await get_all_slackers(guild_id)
+                    if message.author.id in all_slacker_ids:
+                        is_slacker = True
             
             if is_slacker:
                 # Mark ticket as responded
@@ -2621,9 +2675,11 @@ async def on_reaction_add(reaction, user):
             # If this ticket has reached final ping stage (ping_count >= 3), 
             # also accept reactions from ANY slacker
             elif ticket_info["ping_count"] >= 3:
-                all_slacker_ids = await get_all_slackers()
-                if user.id in all_slacker_ids:
-                    is_slacker = True
+                guild_id = reaction.message.guild.id if reaction.message.guild else None
+                if guild_id:
+                    all_slacker_ids = await get_all_slackers(guild_id)
+                    if user.id in all_slacker_ids:
+                        is_slacker = True
             
             if is_slacker:
                 # Only count specific helpful reactions
@@ -3054,23 +3110,25 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
         # Try to access the specified worksheet of the found sheet
         try:
             print(f"🔍 DEBUG: Attempting to access worksheet data...")
-            global sheet, spreadsheet
-            spreadsheet = found_sheet
-            print(f"✅ DEBUG: Set global spreadsheet to: {spreadsheet.title}")
+            guild_id = interaction.guild.id
+            
+            # Store per-guild
+            spreadsheets[guild_id] = found_sheet
+            print(f"✅ DEBUG: Set spreadsheet for guild {guild_id} to: {found_sheet.title}")
             
             # Try to get the worksheet by the specified name, fall back to first worksheet
             print(f"🔍 DEBUG: Looking for worksheet: '{SHEET_PAGE_NAME}'")
             try:
-                sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
+                sheets[guild_id] = spreadsheets[guild_id].worksheet(SHEET_PAGE_NAME)
                 print(f"✅ Connected to worksheet: '{SHEET_PAGE_NAME}'")
             except gspread.WorksheetNotFound as e:
                 print(f"⚠️ Worksheet '{SHEET_PAGE_NAME}' not found, using first available worksheet")
                 print(f"⚠️ DEBUG: WorksheetNotFound error: {e}")
                 try:
-                    available_sheets = [ws.title for ws in spreadsheet.worksheets()]
-                    print(f"📋 Available worksheets: {', '.join(available_sheets)}")
-                    sheet = spreadsheet.worksheets()[0]  # Fall back to first worksheet
-                    print(f"✅ Connected to worksheet: '{sheet.title}'")
+                    available_sheets_list = [ws.title for ws in spreadsheets[guild_id].worksheets()]
+                    print(f"📋 Available worksheets: {', '.join(available_sheets_list)}")
+                    sheets[guild_id] = spreadsheets[guild_id].worksheets()[0]  # Fall back to first worksheet
+                    print(f"✅ Connected to worksheet: '{sheets[guild_id].title}'")
                 except Exception as e2:
                     print(f"❌ DEBUG: Error getting worksheets: {e2}")
                     raise e2
@@ -3078,7 +3136,7 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
             # Test access by getting sheet info
             print(f"🔍 DEBUG: Testing sheet access by reading data...")
             try:
-                test_data = sheet.get_all_records()
+                test_data = sheets[guild_id].get_all_records()
                 print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
             except Exception as e:
                 print(f"❌ DEBUG: Error reading sheet data: {e}")
@@ -3156,7 +3214,7 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
             embed = discord.Embed(
                 title="✅ Template Sheet Connected & Synced!",
                 description=f"Successfully connected to: **{found_sheet.title}**\n"
-                           f"📊 Worksheet: **{sheet.title}**\n"
+                           f"📊 Worksheet: **{sheets[guild_id].title}**\n"
                            f"📊 Found {len(test_data)} rows of data\n"
                            f"🔗 Folder: [Click here]({folder_link})",
                 color=discord.Color.green()
@@ -3175,29 +3233,26 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
             
             # Add note about worksheet selection
             note_text = "Bot will sync users from this sheet automatically every minute."
-            available_sheets = [ws.title for ws in spreadsheet.worksheets()]
-            if len(available_sheets) > 1:
-                if sheet.title != SHEET_PAGE_NAME:
-                    note_text += f"\n\n⚠️ Using '{sheet.title}' ('{SHEET_PAGE_NAME}' not found)"
+            available_sheets_for_note = [ws.title for ws in spreadsheets[guild_id].worksheets()]
+            if len(available_sheets_for_note) > 1:
+                if sheets[guild_id].title != SHEET_PAGE_NAME:
+                    note_text += f"\n\n⚠️ Using '{sheets[guild_id].title}' ('{SHEET_PAGE_NAME}' not found)"
                 # Only show first few worksheets to avoid length issues
-                sheets_display = available_sheets[:3]
-                if len(available_sheets) > 3:
-                    sheets_display.append(f"... +{len(available_sheets)-3} more")
+                sheets_display = available_sheets_for_note[:3]
+                if len(available_sheets_for_note) > 3:
+                    sheets_display.append(f"... +{len(available_sheets_for_note)-3} more")
                 note_text += f"\n\nWorksheets: {', '.join(sheets_display)}"
             
             embed.add_field(name="📝 Note", value=note_text, inline=False)
             embed.set_footer(text="Use /sync to manually trigger another sync anytime")
             
-            # Save connection details to cache
-            cache_data = {
-                "spreadsheet_id": spreadsheet.id,
-                "spreadsheet_title": spreadsheet.title,
-                "worksheet_name": sheet.title,
-                "connected_at": datetime.now().isoformat(),
-                "folder_link": folder_link
-            }
-            save_cache(cache_data)
-            print(f"💾 Saved spreadsheet connection to cache")
+            # Save connection details to cache (per-guild)
+            save_guild_spreadsheet_to_cache(
+                guild_id,
+                spreadsheets[guild_id].id,
+                sheets[guild_id].title
+            )
+            print(f"💾 Saved spreadsheet connection to cache for guild {guild_id}")
             
             await interaction.followup.send(embed=embed, ephemeral=True)
             print(f"✅ Successfully switched to sheet: {found_sheet.title}")
@@ -3246,10 +3301,12 @@ async def sync_command(interaction: discord.Interaction):
             await interaction.followup.send("❌ This command must be used in a server!", ephemeral=True)
             return
         
-        # Check if we have a sheet connected
-        if sheet is None:
+        guild_id = guild.id
+        
+        # Check if we have a sheet connected for this guild
+        if guild_id not in sheets:
             await interaction.followup.send(
-                "❌ No sheet connected!\n\n"
+                "❌ No sheet connected for this server!\n\n"
                 f"Use `/entertemplate` to connect to a Google Drive folder with a '{SHEET_FILE_NAME}' sheet first.",
                 ephemeral=True
             )
@@ -3257,8 +3314,8 @@ async def sync_command(interaction: discord.Interaction):
         
         # Get current sheet data
         try:
-            data = sheet.get_all_records()
-            print(f"📊 Found {len(data)} rows in spreadsheet")
+            data = sheets[guild_id].get_all_records()
+            print(f"📊 Found {len(data)} rows in spreadsheet for guild {guild_id}")
         except Exception as e:
             await interaction.followup.send(f"❌ Could not fetch sheet data: {str(e)}", ephemeral=True)
             return
@@ -3291,10 +3348,12 @@ async def sheet_info_command(interaction: discord.Interaction):
         # Defer immediately since we'll be making API calls
         await interaction.response.defer(ephemeral=True)
         
-        if sheet is None:
+        guild_id = interaction.guild.id
+        
+        if guild_id not in sheets:
             embed = discord.Embed(
                 title="📋 No Sheet Connected",
-                description="No Google Sheet is currently connected to the bot.\n\n"
+                description="No Google Sheet is currently connected to this server.\n\n"
                            f"Use `/entertemplate` to connect to a Google Drive folder with a '{SHEET_FILE_NAME}' sheet.",
                 color=discord.Color.orange()
             )
@@ -3302,6 +3361,8 @@ async def sheet_info_command(interaction: discord.Interaction):
         else:
             try:
                 # Get sheet info
+                sheet = sheets[guild_id]
+                spreadsheet = spreadsheets[guild_id]
                 data = sheet.get_all_records()
                 
                 embed = discord.Embed(
@@ -3560,7 +3621,7 @@ async def help_command(interaction: discord.Interaction):
     
     # # Super Admin commands
     # embed.add_field(
-    #     name="📢 `/msg` `:( Role Only`",
+    #     name="📢 `/msg` `Admin Only`",
     #     value="Send a message as the bot. Usage: `/msg hello world` or `/msg hello world #channel`. Only users with the `:( ` role can use this command.",
     #     inline=False
     # )
@@ -3794,17 +3855,19 @@ class EmailLoginModal(discord.ui.Modal):
         global chapter_role_names
         email = self.email_input.value.strip().lower()
         user = interaction.user
+        guild_id = interaction.guild.id
         
         # Check if we have a sheet connected
-        if sheet is None:
+        if guild_id not in sheets:
             await interaction.followup.send(
-                "❌ No sheet connected! Please ask an admin to connect a sheet first using `/entertemplate`.",
+                "❌ No sheet connected for this server! Please ask an admin to connect a sheet first using `/entertemplate`.",
                 ephemeral=True
             )
             return
         
         try:
             # Get all sheet data
+            sheet = sheets[guild_id]
             data = sheet.get_all_records()
             
             # Find the user by email
@@ -4018,13 +4081,15 @@ async def assign_slacker_zones_command(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
     # Verify spreadsheet connection
-    global spreadsheet
-    if spreadsheet is None:
+    guild_id = interaction.guild.id
+    if guild_id not in spreadsheets:
         await interaction.followup.send(
-            "❌ No spreadsheet connected! Use `/entertemplate` first to connect your sheet.",
+            "❌ No spreadsheet connected for this server! Use `/entertemplate` first to connect your sheet.",
             ephemeral=True
         )
         return
+
+    spreadsheet = spreadsheets[guild_id]
 
     # Open the worksheet or find a separate spreadsheet in the same Drive folder
     worksheet_name = "Slacker Assignments"
@@ -4215,26 +4280,29 @@ async def assign_slacker_zones_command(interaction: discord.Interaction):
 
 @tasks.loop(minutes=1)
 async def sync_members():
-    """Every minute, read spreadsheet and invite any new Discord IDs."""
+    """Every minute, read each guild's spreadsheet and invite any new Discord IDs."""
     print("🔄 Running member sync...")
     
-    # Check if we have a sheet connected
-    if sheet is None:
-        print("⚠️ No sheet connected - use /entertemplate to connect to a sheet")
+    # Check if we have any sheets connected
+    if not sheets:
+        print("⚠️ No sheets connected - use /entertemplate to connect to a sheet in each server")
         return
     
-    try:
-        # Fetch all rows as list of dicts
-        data = sheet.get_all_records()
-        print(f"📊 Found {len(data)} rows in spreadsheet")
-    except Exception as e:
-        print("❌ Could not fetch sheet:", e)
-        return
-
-    # Sync with all guilds the bot is in
+    # Sync each guild with its own sheet
     total_processed = 0
     for guild in bot.guilds:
+        guild_id = guild.id
+        
+        # Skip guilds without a sheet connection
+        if guild_id not in sheets:
+            print(f"⚠️ No sheet connected for guild {guild.name} - skipping")
+            continue
+        
         try:
+            # Fetch all rows from this guild's sheet
+            data = sheets[guild_id].get_all_records()
+            print(f"📊 Found {len(data)} rows in spreadsheet for {guild.name}")
+            
             print(f"🔄 Syncing members for guild: {guild.name}")
             sync_results = await perform_member_sync(guild, data)
             total_processed += sync_results['processed']
@@ -4306,14 +4374,15 @@ async def check_help_tickets():
             print(f"🗑️ Removed invalid ticket {thread_id} from tracking")
 
 
-async def get_all_slackers():
+async def get_all_slackers(guild_id):
     """Get Discord IDs of ALL slackers from the Slacker Assignments sheet"""
-    global spreadsheet
-    if not spreadsheet:
-        print("❌ No spreadsheet connected for all slackers lookup")
+    if guild_id not in spreadsheets:
+        print(f"❌ No spreadsheet connected for guild {guild_id}")
         return []
     
     try:
+        spreadsheet = spreadsheets[guild_id]
+        
         # Try to get the Slacker Assignments worksheet
         try:
             sheet = spreadsheet.worksheet("Slacker Assignments")
@@ -4402,7 +4471,8 @@ async def send_ticket_repings(thread, ticket_info):
         # For final ping (3rd ping), get ALL slackers instead of just zone slackers
         if ping_count >= 3:
             print(f"🚨 Final ping for ticket {thread.id} - getting ALL slackers")
-            all_slacker_ids = await get_all_slackers()
+            guild_id = thread.guild.id
+            all_slacker_ids = await get_all_slackers(guild_id)
             slacker_mentions = []
             for slacker_id in all_slacker_ids:
                 member = thread.guild.get_member(slacker_id)
@@ -4477,8 +4547,10 @@ async def debug_zone_command(interaction: discord.Interaction, user: discord.Mem
     await interaction.response.defer(ephemeral=True)
 
     try:
+        guild_id = interaction.guild.id
+        
         # Look up the user's event and building
-        user_event_info = await get_user_event_building(user.id)
+        user_event_info = await get_user_event_building(guild_id, user.id)
         if not user_event_info:
             await interaction.followup.send(f"❌ Could not find event/building info for {user.mention}")
             return
@@ -4493,13 +4565,13 @@ async def debug_zone_command(interaction: discord.Interaction, user: discord.Mem
             return
 
         # Get the zone for this building
-        zone = await get_building_zone(building)
+        zone = await get_building_zone(guild_id, building)
         if not zone:
             await interaction.followup.send(f"❌ No zone found for building '{building}'")
             return
 
         # Get all slackers in this zone
-        zone_slackers = await get_zone_slackers(zone)
+        zone_slackers = await get_zone_slackers(guild_id, zone)
 
         # Create embed with debug info
         embed = discord.Embed(
@@ -4684,47 +4756,50 @@ async def clear_cache_command(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
     try:
-        # Check if cache exists
-        cache_exists = os.path.exists(CACHE_FILE)
+        guild_id = interaction.guild.id
         
-        if not cache_exists:
-            await interaction.followup.send("📄 No cache file found to clear.")
-            return
-
-        # Clear the cache
-        clear_cache()
+        # Clear the guild-specific cache
+        cleared = clear_guild_cache(guild_id)
         
-        # Also clear the current connection
-        global sheet, spreadsheet
-        sheet = None
-        spreadsheet = None
+        # Also clear the current connection for this guild
+        if guild_id in sheets:
+            del sheets[guild_id]
+        if guild_id in spreadsheets:
+            del spreadsheets[guild_id]
 
-        embed = discord.Embed(
-            title="🗑️ Cache Cleared",
-            description="Cached spreadsheet connection has been cleared.\nUse `/entertemplate` to reconnect to a sheet.",
-            color=discord.Color.orange()
-        )
+        if cleared or guild_id in sheets or guild_id in spreadsheets:
+            embed = discord.Embed(
+                title="🗑️ Cache Cleared",
+                description="Cached spreadsheet connection for this server has been cleared.\nUse `/entertemplate` to reconnect to a sheet.",
+                color=discord.Color.green()
+            )
+        else:
+            embed = discord.Embed(
+                title="📄 No Cache Found",
+                description="No cached connection found for this server.",
+                color=discord.Color.orange()
+            )
 
         await interaction.followup.send(embed=embed)
-        print("🧹 Admin cleared the cache via command")
+        print(f"🧹 Admin cleared the cache for guild {guild_id} via command")
 
     except Exception as e:
         await interaction.followup.send(f"❌ Error clearing cache: {str(e)}")
         print(f"❌ Clear cache error: {e}")
 
 
-@bot.tree.command(name="msg", description="Send a message as the bot (:( role only)")
+@bot.tree.command(name="msg", description="Send a message as the bot (admin only)")
 @app_commands.describe(
     message="The message to send",
     channel="Channel to send to (optional, defaults to current channel)"
 )
 async def msg_command(interaction: discord.Interaction, message: str, channel: discord.TextChannel = None):
-    """Send a message as the bot - restricted to :( role only"""
+    """Send a message as the bot - restricted to admin only"""
     
     # Defer immediately to prevent timeout
     await interaction.response.defer(ephemeral=True)
     
-    # Check if user has the :( role
+    # Check if user has the admin role
     sad_face_role = discord.utils.get(interaction.user.roles, name=":(")
     if not sad_face_role:
         await interaction.followup.send("❌ You need the `:( ` role to use this command!", ephemeral=True)
