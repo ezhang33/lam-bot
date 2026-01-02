@@ -3285,6 +3285,9 @@ async def sync_command(interaction: discord.Interaction):
 async def sheet_info_command(interaction: discord.Interaction):
     """Show information about the currently connected sheet"""
     
+    # Defer immediately since we'll be making API calls
+    await interaction.response.defer(ephemeral=True)
+    
     if sheet is None:
         embed = discord.Embed(
             title="📋 No Sheet Connected",
@@ -3342,7 +3345,7 @@ async def sheet_info_command(interaction: discord.Interaction):
             )
             embed.add_field(name="💡 Suggestion", value="Try using `/entertemplate` to reconnect to the sheet", inline=False)
     
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 def _run_kmeans_clustering(points, k, max_iterations=100):
 	"""Run a simple K-means clustering on 2D points.
@@ -4730,10 +4733,45 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
         print(f"📢 {interaction.user} used /msg in {interaction.guild.name}: '{message}' → #{target_channel.name}")
         
     except discord.Forbidden:
-        await interaction.response.send_message(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
+        # Only respond if we haven't already responded
+        if not interaction.response.is_done():
+            await interaction.response.send_message(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ I don't have permission to send messages in {target_channel.mention}!", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ Error sending message: {str(e)}", ephemeral=True)
+        # Only respond if we haven't already responded
+        if not interaction.response.is_done():
+            await interaction.response.send_message(f"❌ Error sending message: {str(e)}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ Error sending message: {str(e)}", ephemeral=True)
         print(f"❌ Error in /msg command: {e}")
 
 if __name__ == "__main__":
+    # Start a simple HTTP health check server for Fly.io
+    # This prevents auto-stop since Fly.io sees the machine as "active"
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+    
+    class HealthCheckHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            """Simple health check endpoint"""
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Bot is running!')
+        
+        def log_message(self, format, *args):
+            """Suppress HTTP logs to keep console clean"""
+            pass
+    
+    # Start health check server in background thread
+    def run_health_server():
+        server = HTTPServer(('0.0.0.0', 8080), HealthCheckHandler)
+        print("🏥 Health check server running on port 8080")
+        server.serve_forever()
+    
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+    
+    # Run the Discord bot
     bot.run(TOKEN)
