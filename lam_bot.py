@@ -3850,19 +3850,48 @@ class EmailLoginModal(discord.ui.Modal):
         self.add_item(self.email_input)
     
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        
-        global chapter_role_names
-        email = self.email_input.value.strip().lower()
-        user = interaction.user
-        guild_id = interaction.guild.id
-        
-        # Check if we have a sheet connected
-        if guild_id not in sheets:
-            await interaction.followup.send(
-                "❌ No sheet connected for this server! Please ask an admin to connect a sheet first using `/entertemplate`.",
-                ephemeral=True
-            )
+        try:
+            await interaction.response.defer(ephemeral=True)
+            
+            global chapter_role_names
+            email = self.email_input.value.strip().lower()
+            user = interaction.user
+            
+            # Check if we're in a guild
+            if not interaction.guild:
+                await interaction.followup.send(
+                    "❌ This command must be used in a server!",
+                    ephemeral=True
+                )
+                return
+            
+            guild_id = interaction.guild.id
+            
+            # Check if we have a sheet connected
+            if guild_id not in sheets:
+                await interaction.followup.send(
+                    "❌ No sheet connected for this server! Please ask an admin to connect a sheet first using `/entertemplate`.",
+                    ephemeral=True
+                )
+                return
+        except Exception as e:
+            print(f"❌ Error in login modal callback (before sheet operations): {e}")
+            print(f"❌ Error type: {type(e)}")
+            import traceback
+            traceback.print_exc()
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        f"❌ Error during login: {str(e)}\n\nPlease try again or contact an admin.",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        f"❌ Error during login: {str(e)}\n\nPlease try again or contact an admin.",
+                        ephemeral=True
+                    )
+            except:
+                pass
             return
         
         try:
@@ -4055,11 +4084,17 @@ class EmailLoginModal(discord.ui.Modal):
                 print(f"❌ Error updating sheet for {email}: {e}")
                 
         except Exception as e:
-            await interaction.followup.send(
-                f"❌ Error accessing sheet: {str(e)}",
-                ephemeral=True
-            )
             print(f"❌ Error accessing sheet in login: {e}")
+            print(f"❌ Error type: {type(e)}")
+            import traceback
+            traceback.print_exc()
+            try:
+                await interaction.followup.send(
+                    f"❌ Error accessing sheet: {str(e)}\n\nPlease contact an admin for help.",
+                    ephemeral=True
+                )
+            except Exception as followup_error:
+                print(f"❌ Could not send error message via followup: {followup_error}")
 
 @bot.tree.command(name="login", description="Login by providing your email address to get your assigned roles")
 async def login_command(interaction: discord.Interaction):
