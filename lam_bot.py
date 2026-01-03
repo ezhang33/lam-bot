@@ -2036,13 +2036,13 @@ async def give_slacker_access_to_all_channels_for_guild(guild):
                 except Exception as e:
                     print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
             
-            elif channel.category.name == "Chapters":
-                try:
-                    await add_slacker_access(channel, slacker_role)
-                    volunteer_channels += 1
-                    print(f"🔑 Added {slacker_role.name} access to #{channel.name} (Chapters)")
-                except Exception as e:
-                    print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
+            # elif channel.category.name == "Chapters":
+            #     try:
+            #         await add_slacker_access(channel, slacker_role)
+            #         volunteer_channels += 1
+            #         print(f"🔑 Added {slacker_role.name} access to #{channel.name} (Chapters)")
+            #     except Exception as e:
+            #         print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
             
             elif channel.category.name == "Volunteers":
                 try:
