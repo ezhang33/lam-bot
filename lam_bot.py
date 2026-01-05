@@ -1368,8 +1368,8 @@ async def post_welcome_instructions(welcome_channel):
         embed.add_field(
             name="🔐 Getting Started - Login Required",
             value="**To access all channels and get your roles, you need to login:**\n\n"
-                  "1️⃣ Type `/login` in any channel\n"
-                  "2️⃣ Enter your email address when prompted\n"
+                  "1️⃣ Type `/login email:your@email.com` in any channel\n"
+                  "2️⃣ Replace `your@email.com` with your actual email\n"
                   "3️⃣ Get instant access to your assigned channels!\n\n"
                   "✅ You'll automatically receive:\n"
                   "• Your assigned roles\n"
@@ -3823,273 +3823,255 @@ async def reload_commands_command(interaction: discord.Interaction):
             await interaction.followup.send(f"❌ Error syncing commands: {error_msg}", ephemeral=True)
         print(f"❌ Error syncing commands: {e}")
 
-# Modal for email input
-class EmailLoginModal(discord.ui.Modal):
-    def __init__(self):
-        super().__init__(title="Login with Email")
-        
-        self.email_input = discord.ui.TextInput(
-            label="Email Address",
-            placeholder="Enter your email address...",
-            style=discord.TextStyle.short,
-            required=True
-        )
-        self.add_item(self.email_input)
-    
-    async def callback(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            
-            global chapter_role_names
-            email = self.email_input.value.strip().lower()
-            user = interaction.user
-            
-            # Check if we're in a guild
-            if not interaction.guild:
-                await interaction.followup.send(
-                    "❌ This command must be used in a server!",
-                    ephemeral=True
-                )
-                return
-            
-            guild_id = interaction.guild.id
-            
-            # Check if we have a sheet connected
-            if guild_id not in sheets:
-                await interaction.followup.send(
-                    "❌ No sheet connected for this server! Please ask an admin to connect a sheet first using `/entertemplate`.",
-                    ephemeral=True
-                )
-                return
-        except Exception as e:
-            print(f"❌ Error in login modal callback (before sheet operations): {e}")
-            print(f"❌ Error type: {type(e)}")
-            import traceback
-            traceback.print_exc()
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(
-                        f"❌ Error during login: {str(e)}\n\nPlease try again or contact an admin.",
-                        ephemeral=True
-                    )
-                else:
-                    await interaction.followup.send(
-                        f"❌ Error during login: {str(e)}\n\nPlease try again or contact an admin.",
-                        ephemeral=True
-                    )
-            except:
-                pass
-            return
-        
-        try:
-            # Get all sheet data
-            sheet = sheets[guild_id]
-            data = sheet.get_all_records()
-            
-            # Find the user by email
-            user_row = None
-            row_index = None
-            
-            for i, row in enumerate(data):
-                row_email = str(row.get("Email", "")).strip().lower()
-                if row_email == email:
-                    user_row = row
-                    row_index = i + 2  # +2 because rows are 1-indexed and we skip header
-                    break
-            
-            if not user_row:
-                await interaction.followup.send(
-                    f"❌ Email `{email}` not found!\n\n"
-                    "Please make sure:\n"
-                    "• You entered the correct email address\n"
-                    "• There are no typos\n"
-                    "• Your name is not David Zheng (he's banned)",
-                    ephemeral=True
-                )
-                return
-            
-            # Check if Discord ID is already filled
-            current_discord_id = str(user_row.get("Discord ID", "")).strip()
-            if current_discord_id and current_discord_id != str(user.id):
-                await interaction.followup.send(
-                    f"⚠️ This email is already linked to a different Discord account!\n\n"
-                    f"**Current Discord ID:** {current_discord_id}\n"
-                    f"**Your Discord ID:** {user.id}\n\n"
-                    "If this is an error, please contact an admin.",
-                    ephemeral=True
-                )
-                return
-            
-            # Update the Discord ID in the sheet
-            try:
-                # Find the column letter for Discord ID
-                headers = sheet.row_values(1)
-                discord_id_col = None
-                for i, header in enumerate(headers):
-                    if header == "Discord ID":
-                        discord_id_col = i + 1  # +1 because columns are 1-indexed
-                        break
-                
-                if discord_id_col is None:
-                    await interaction.followup.send(
-                        "❌ 'Discord ID' column not found in the sheet!",
-                        ephemeral=True
-                    )
-                    return
-                
-                # Convert column number to letter (A=1, B=2, etc.)
-                col_letter = chr(ord('A') + discord_id_col - 1)
-                cell_address = f"{col_letter}{row_index}"
-                
-                # Update the cell with the Discord ID
-                sheet.update(cell_address, [[str(user.id)]])
-                
-                print(f"✅ Updated Discord ID for {email} to {user.id} in cell {cell_address}")
-                
-                # Trigger a sync
-                guild = interaction.guild
-                if guild:
-                    updated_data = sheet.get_all_records()
-                    sync_results = await perform_member_sync(guild, updated_data)
-                    
-                    # Get user info for response
-                    user_name = str(user_row.get("Name", "")).strip()
-                    first_event = str(user_row.get("First Event", "")).strip()
-                    master_role = str(user_row.get("Master Role", "")).strip()
-                    secondary_role = str(user_row.get("Secondary Role", "")).strip()
-                    chapter = str(user_row.get("Chapter", "")).strip()
-                    building = str(user_row.get("Building 1", "")).strip()
-                    room = str(user_row.get("Room 1", "")).strip()
-
-                    if(user_name == "David Zheng"):
-                        embed = discord.Embed(
-                            title="🤬 Oh god it's you again. Today better be a stress level -5 kind of day 😴",
-                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
-                            color=discord.Color.green()
-                        )
-                    
-                    elif(user_name == "Brian Lam"):
-                        embed = discord.Embed(
-                            title="❤️ Omg hi Brian I miss you. You are the LAM!!! 🐑",
-                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
-                            color=discord.Color.green()
-                        )
-                    
-                    elif(user_name == "Nikki Cheung"):
-                        embed = discord.Embed(
-                            title="🥑 Is it green? 🥑",
-                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
-                            color=discord.Color.green()
-                        )
-
-                    elif(user_name == "Jinhuang Zhou"):
-                        embed = discord.Embed(
-                            title="🫵 Jinhuang Zhou. You are in trouble. Please report to the principal's office immediately.",
-                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
-                            color=discord.Color.green()
-                        )
-                        
-                    elif(user_name == "Satvik Kumar"):
-                        embed = discord.Embed(
-                            title="🌊 Hi Satvik when are we going surfing 🏄‍♂️",
-                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
-                            color=discord.Color.green()
-                        )
-                        
-                    else:
-                        embed = discord.Embed(
-                            title="✅ Successfully Logged In!",
-                            description=f"Your Discord account has been linked to your email and roles have been assigned.",
-                            color=discord.Color.green()
-                        )
-                        
-                    # Build your information field
-                    info_text = f"**Name:** {user_name or 'Not specified'}\n"
-                    info_text += f"**Email:** {email}"
-                    
-                    if building and room:
-                        info_text += f"\n**Location:** {building}, Room {room}"
-                    elif building:
-                        info_text += f"\n**Building:** {building}"
-                    elif room:
-                        info_text += f"\n**Room:** {room}"
-                    
-                    embed.add_field(
-                        name="👤 Your Information",
-                        value=info_text,
-                        inline=False
-                    )
-                    
-                    roles_assigned = []
-                    if master_role:
-                        roles_assigned.append(master_role)
-                    if first_event != master_role:
-                        roles_assigned.append(first_event)
-                    if secondary_role and secondary_role not in roles_assigned:
-                        roles_assigned.append(secondary_role)
-                    
-                    # Add chapter role
-                    if chapter and chapter.lower() not in ["n/a", "na", ""]:
-                        roles_assigned.append(chapter)
-                        # Add to chapter role names set
-                        chapter_role_names.add(chapter)
-                    else:
-                        roles_assigned.append("Unaffiliated")
-                        # Unaffiliated is also a chapter role
-                        chapter_role_names.add("Unaffiliated")
-                    
-                    if roles_assigned:
-                        embed.add_field(
-                            name="🎭 Roles Assigned",
-                            value="\n".join([f"• {role}" for role in roles_assigned]),
-                            inline=False
-                        )
-                    
-                    embed.add_field(
-                        name="🎉 What's Next?",
-                        value="• You now have access to relevant channels\n"
-                            "• Your nickname has been updated\n"
-                            "• Check out the channels you can now see!",
-                        inline=False
-                    )
-                    
-                    embed.set_footer(text="Welcome to the team!")
-                    
-                    await interaction.followup.send(embed=embed, ephemeral=True)
-                    
-                else:
-                    await interaction.followup.send(
-                        "✅ Discord ID updated successfully, but could not trigger sync. Please contact an admin.",
-                        ephemeral=True
-                    )
-                    
-            except Exception as e:
-                await interaction.followup.send(
-                    f"❌ Error updating sheet: {str(e)}",
-                    ephemeral=True
-                )
-                print(f"❌ Error updating sheet for {email}: {e}")
-                
-        except Exception as e:
-            print(f"❌ Error accessing sheet in login: {e}")
-            print(f"❌ Error type: {type(e)}")
-            import traceback
-            traceback.print_exc()
-            try:
-                await interaction.followup.send(
-                    f"❌ Error accessing sheet: {str(e)}\n\nPlease contact an admin for help.",
-                    ephemeral=True
-                )
-            except Exception as followup_error:
-                print(f"❌ Could not send error message via followup: {followup_error}")
-
 @bot.tree.command(name="login", description="Login by providing your email address to get your assigned roles")
-async def login_command(interaction: discord.Interaction):
+async def login_command(interaction: discord.Interaction, email: str):
     """Login with email to get assigned roles"""
     
-    # Show the modal
-    modal = EmailLoginModal()
-    await interaction.response.send_modal(modal)
+    try:
+        await interaction.response.defer(ephemeral=True)
+        
+        global chapter_role_names
+        email = email.strip().lower()
+        user = interaction.user
+        
+        # Check if we're in a guild
+        if not interaction.guild:
+            await interaction.followup.send(
+                "❌ This command must be used in a server!",
+                ephemeral=True
+            )
+            return
+        
+        guild_id = interaction.guild.id
+        
+        # Check if we have a sheet connected
+        if guild_id not in sheets:
+            await interaction.followup.send(
+                "❌ No sheet connected for this server! Please ask an admin to connect a sheet first using `/entertemplate`.",
+                ephemeral=True
+            )
+            return
+    except Exception as e:
+        print(f"❌ Error in login command (before sheet operations): {e}")
+        print(f"❌ Error type: {type(e)}")
+        import traceback
+        traceback.print_exc()
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    f"❌ Error during login: {str(e)}\n\nPlease try again or contact an admin.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    f"❌ Error during login: {str(e)}\n\nPlease try again or contact an admin.",
+                    ephemeral=True
+                )
+        except:
+            pass
+        return
+    
+    try:
+        # Get all sheet data
+        sheet = sheets[guild_id]
+        data = sheet.get_all_records()
+        
+        # Find the user by email
+        user_row = None
+        row_index = None
+        
+        for i, row in enumerate(data):
+            row_email = str(row.get("Email", "")).strip().lower()
+            if row_email == email:
+                user_row = row
+                row_index = i + 2  # +2 because rows are 1-indexed and we skip header
+                break
+        
+        if not user_row:
+            await interaction.followup.send(
+                f"❌ Email `{email}` not found!\n\n"
+                "Please make sure:\n"
+                "• You entered the correct email address\n"
+                "• There are no typos\n"
+                "• Your name is not David Zheng (he's banned)",
+                ephemeral=True
+            )
+            return
+        
+        # Check if Discord ID is already filled
+        current_discord_id = str(user_row.get("Discord ID", "")).strip()
+        if current_discord_id and current_discord_id != str(user.id):
+            await interaction.followup.send(
+                f"⚠️ This email is already linked to a different Discord account!\n\n"
+                f"**Current Discord ID:** {current_discord_id}\n"
+                f"**Your Discord ID:** {user.id}\n\n"
+                "If this is an error, please contact an admin.",
+                ephemeral=True
+            )
+            return
+        
+        # Update the Discord ID in the sheet
+        try:
+            # Find the column letter for Discord ID
+            headers = sheet.row_values(1)
+            discord_id_col = None
+            for i, header in enumerate(headers):
+                if header == "Discord ID":
+                    discord_id_col = i + 1  # +1 because columns are 1-indexed
+                    break
+            
+            if discord_id_col is None:
+                await interaction.followup.send(
+                    "❌ 'Discord ID' column not found in the sheet!",
+                    ephemeral=True
+                )
+                return
+            
+            # Convert column number to letter (A=1, B=2, etc.)
+            col_letter = chr(ord('A') + discord_id_col - 1)
+            cell_address = f"{col_letter}{row_index}"
+            
+            # Update the cell with the Discord ID
+            sheet.update(cell_address, [[str(user.id)]])
+            
+            print(f"✅ Updated Discord ID for {email} to {user.id} in cell {cell_address}")
+            
+            # Trigger a sync
+            guild = interaction.guild
+            if guild:
+                updated_data = sheet.get_all_records()
+                sync_results = await perform_member_sync(guild, updated_data)
+                
+                # Get user info for response
+                user_name = str(user_row.get("Name", "")).strip()
+                first_event = str(user_row.get("First Event", "")).strip()
+                master_role = str(user_row.get("Master Role", "")).strip()
+                secondary_role = str(user_row.get("Secondary Role", "")).strip()
+                chapter = str(user_row.get("Chapter", "")).strip()
+                building = str(user_row.get("Building 1", "")).strip()
+                room = str(user_row.get("Room 1", "")).strip()
+
+                if(user_name == "David Zheng"):
+                    embed = discord.Embed(
+                        title="🤬 Oh god it's you again. Today better be a stress level -5 kind of day 😴",
+                        description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                        color=discord.Color.green()
+                    )
+                
+                elif(user_name == "Brian Lam"):
+                    embed = discord.Embed(
+                        title="❤️ Omg hi Brian I miss you. You are the LAM!!! 🐑",
+                        description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                        color=discord.Color.green()
+                    )
+                
+                elif(user_name == "Nikki Cheung"):
+                    embed = discord.Embed(
+                        title="🥑 Is it green? 🥑",
+                        description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                        color=discord.Color.green()
+                    )
+
+                elif(user_name == "Jinhuang Zhou"):
+                    embed = discord.Embed(
+                        title="🫵 Jinhuang Zhou. You are in trouble. Please report to the principal's office immediately.",
+                        description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                        color=discord.Color.green()
+                    )
+                    
+                elif(user_name == "Satvik Kumar"):
+                    embed = discord.Embed(
+                        title="🌊 Hi Satvik when are we going surfing 🏄‍♂️",
+                        description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                        color=discord.Color.green()
+                    )
+                    
+                else:
+                    embed = discord.Embed(
+                        title="✅ Successfully Logged In!",
+                        description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                        color=discord.Color.green()
+                    )
+                    
+                # Build your information field
+                info_text = f"**Name:** {user_name or 'Not specified'}\n"
+                info_text += f"**Email:** {email}"
+                
+                if building and room:
+                    info_text += f"\n**Location:** {building}, Room {room}"
+                elif building:
+                    info_text += f"\n**Building:** {building}"
+                elif room:
+                    info_text += f"\n**Room:** {room}"
+                
+                embed.add_field(
+                    name="👤 Your Information",
+                    value=info_text,
+                    inline=False
+                )
+                
+                roles_assigned = []
+                if master_role:
+                    roles_assigned.append(master_role)
+                if first_event != master_role:
+                    roles_assigned.append(first_event)
+                if secondary_role and secondary_role not in roles_assigned:
+                    roles_assigned.append(secondary_role)
+                
+                # Add chapter role
+                if chapter and chapter.lower() not in ["n/a", "na", ""]:
+                    roles_assigned.append(chapter)
+                    # Add to chapter role names set
+                    chapter_role_names.add(chapter)
+                else:
+                    roles_assigned.append("Unaffiliated")
+                    # Unaffiliated is also a chapter role
+                    chapter_role_names.add("Unaffiliated")
+                
+                if roles_assigned:
+                    embed.add_field(
+                        name="🎭 Roles Assigned",
+                        value="\n".join([f"• {role}" for role in roles_assigned]),
+                        inline=False
+                    )
+                
+                embed.add_field(
+                    name="🎉 What's Next?",
+                    value="• You now have access to relevant channels\n"
+                        "• Your nickname has been updated\n"
+                        "• Check out the channels you can now see!",
+                    inline=False
+                )
+                
+                embed.set_footer(text="Welcome to the team!")
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            else:
+                await interaction.followup.send(
+                    "✅ Discord ID updated successfully, but could not trigger sync. Please contact an admin.",
+                    ephemeral=True
+                )
+                
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Error updating sheet: {str(e)}",
+                ephemeral=True
+            )
+            print(f"❌ Error updating sheet for {email}: {e}")
+            
+    except Exception as e:
+        print(f"❌ Error accessing sheet in login: {e}")
+        print(f"❌ Error type: {type(e)}")
+        import traceback
+        traceback.print_exc()
+        try:
+            await interaction.followup.send(
+                f"❌ Error accessing sheet: {str(e)}\n\nPlease contact an admin for help.",
+                ephemeral=True
+            )
+        except Exception as followup_error:
+            print(f"❌ Could not send error message via followup: {followup_error}")
 
 
 @bot.tree.command(name="assignslackerzones", description="Assign zone numbers per building in 'Slacker Assignments' using K-means (Admin only)")
