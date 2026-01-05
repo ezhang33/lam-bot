@@ -881,15 +881,6 @@ async def setup_chapter_structure(guild, chapter_name):
                 read_message_history=True
             )
             
-            # Give Slacker role access too
-            slacker_role = discord.utils.get(guild.roles, name="Slacker")
-            if slacker_role:
-                overwrites[slacker_role] = discord.PermissionOverwrite(
-                    read_messages=True,
-                    send_messages=True,
-                    read_message_history=True
-                )
-            
             await handle_rate_limit(
                 chapter_channel.edit(overwrites=overwrites, reason=f"Set up {chapter_name} chapter permissions"),
                 f"editing chapter channel '{channel_name}' permissions"
