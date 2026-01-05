@@ -1368,8 +1368,8 @@ async def post_welcome_instructions(welcome_channel):
         embed.add_field(
             name="🔐 Getting Started - Login Required",
             value="**To access all channels and get your roles, you need to login:**\n\n"
-                  "1️⃣ Type `/login email:your@email.com` in any channel\n"
-                  "2️⃣ Replace `your@email.com` with your actual email\n"
+                  "1️⃣ Type `/login email:your@email.com password:yourpassword`\n"
+                  "2️⃣ Replace with your actual email address and the password you received in your volunteer info email\n"
                   "3️⃣ Get instant access to your assigned channels!\n\n"
                   "✅ You'll automatically receive:\n"
                   "• Your assigned roles\n"
@@ -3508,7 +3508,7 @@ async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(
         title="Getting Started With LamBot",
         description="**For Users:**\n"
-                    "1. Use `/login` to enter your email and get your roles automatically\n"
+                    "1. Use `/login email:your@email.com password:yourpassword` to log in and get your roles\n"
                     "2. Access to channels will be granted based on your assigned roles\n\n"
 
                     "**For Admins:**\n"
@@ -3823,15 +3823,16 @@ async def reload_commands_command(interaction: discord.Interaction):
             await interaction.followup.send(f"❌ Error syncing commands: {error_msg}", ephemeral=True)
         print(f"❌ Error syncing commands: {e}")
 
-@bot.tree.command(name="login", description="Login by providing your email address to get your assigned roles")
-async def login_command(interaction: discord.Interaction, email: str):
-    """Login with email to get assigned roles"""
+@bot.tree.command(name="login", description="Login by providing your email address and password to get your assigned roles")
+async def login_command(interaction: discord.Interaction, email: str, password: str):
+    """Login with email and password to get assigned roles"""
     
     try:
         await interaction.response.defer(ephemeral=True)
         
         global chapter_role_names
         email = email.strip().lower()
+        password = password.strip()
         user = interaction.user
         
         # Check if we're in a guild
@@ -3896,6 +3897,25 @@ async def login_command(interaction: discord.Interaction, email: str):
                 "• Your name is not David Zheng (he's banned)",
                 ephemeral=True
             )
+            return
+        
+        # Check if password matches
+        sheet_password = str(user_row.get("Password", "")).strip()
+        if not sheet_password:
+            await interaction.followup.send(
+                "❌ No password set for this account!\n\n"
+                "Please contact an admin to set up your password in the sheet.",
+                ephemeral=True
+            )
+            return
+        
+        if password != sheet_password:
+            await interaction.followup.send(
+                "❌ Incorrect password!\n\n"
+                "Please make sure you entered the correct password.",
+                ephemeral=True
+            )
+            print(f"🔒 Failed login attempt for {email} - incorrect password")
             return
         
         # Check if Discord ID is already filled
