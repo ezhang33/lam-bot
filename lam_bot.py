@@ -5,19 +5,15 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import json
-import base64
 
 load_dotenv()
 
 TOKEN         = os.getenv("DISCORD_TOKEN")
 SERVICE_EMAIL = os.getenv("SERVICE_EMAIL")
-GSPCREDSB64  = os.getenv("GSPREAD_CREDS")
-GSPCREDS      = json.loads(base64.b64decode(GSPCREDSB64).decode('utf-8'))
-# GSPCREDS      = "/etc/secrets/gspread_creds.json"
 SHEET_ID      = os.getenv("SHEET_ID")  # Optional - can be set via /entertemplate command
 SHEET_FILE_NAME = os.getenv("SHEET_FILE_NAME", "[TEMPLATE] Socal State")  # Name of the Google Sheet file to look for
 SHEET_PAGE_NAME = os.getenv("SHEET_PAGE_NAME", "Sheet1")  # Name of the worksheet/tab within the sheet
@@ -45,7 +41,7 @@ scope = [
     "https://www.googleapis.com/auth/spreadsheets",  # Full spreadsheet access (read & write)
     "https://www.googleapis.com/auth/drive.readonly"  # Needed to search for sheets
 ]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(GSPCREDS, scope)
+creds = Credentials.from_service_account_file("secrets/gspread.json", scope)
 gc = gspread.authorize(creds)
 
 # Sheet connections are now per-guild (per-server)

@@ -1,5 +1,6 @@
 # Environment variables
 .env
+secrets/
 
 # Google Service Account credentials
 gspread_creds/
