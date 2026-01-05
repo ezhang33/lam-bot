@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import gspread
-from google.oauth2.service_account import Credentials
+from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import json
@@ -41,7 +41,7 @@ scope = [
     "https://www.googleapis.com/auth/spreadsheets",  # Full spreadsheet access (read & write)
     "https://www.googleapis.com/auth/drive.readonly"  # Needed to search for sheets
 ]
-creds = Credentials.from_service_account_file("secrets/gspread.json", scope)
+creds = ServiceAccountCredentials.from_json_keyfile_dict(json.load(open("secrets/gspread.json")), scope)
 gc = gspread.authorize(creds)
 
 # Sheet connections are now per-guild (per-server)
