@@ -428,7 +428,7 @@ async def get_or_create_channel(guild, channel_name, category, event_role=None, 
         
         # Give Slacker role access only to static channels (not building/event channels)
         slacker_role = discord.utils.get(guild.roles, name="Slacker")
-        static_categories = ["Welcome", "Tournament Officials", "Chapters", "Volunteers"]
+        static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
         if slacker_role and category and category.name in static_categories:
             overwrites[slacker_role] = discord.PermissionOverwrite(
                 read_messages=True,
@@ -1977,7 +1977,7 @@ async def remove_slacker_access_from_building_channels_for_guild(guild):
     for channel in guild.text_channels:
         if channel.category:
             # Remove access from channels that are NOT in static categories
-            if channel.category.name not in ["Welcome", "Tournament Officials", "Chapters", "Volunteers"]:
+            if channel.category.name not in ["Welcome", "Tournament Officials", "Volunteers"]:
                 try:
                     # Check if Slacker role has access to this channel
                     overwrites = channel.overwrites
@@ -2051,7 +2051,7 @@ async def give_slacker_access_to_all_channels_for_guild(guild):
     # Add access to forum channels in static categories
     for channel in guild.channels:
         if channel.type == discord.ChannelType.forum and channel.category:
-            if channel.category.name in ["Welcome", "Tournament Officials", "Chapters", "Volunteers"]:
+            if channel.category.name in ["Welcome", "Tournament Officials", "Volunteers"]:
                 try:
                     overwrites = channel.overwrites
                     overwrites[slacker_role] = discord.PermissionOverwrite(
