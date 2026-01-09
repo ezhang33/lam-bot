@@ -4856,6 +4856,167 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
         await interaction.followup.send(f"❌ Error sending message: {str(e)}", ephemeral=True)
         print(f"❌ Error in /msg command: {e}")
 
+
+@bot.tree.command(name="resetserver", description="⚠️ DANGER: Completely reset the server - deletes channels, roles, categories (Admin only)")
+async def reset_server_command(interaction: discord.Interaction):
+    """⚠️ DANGER: Completely reset the server by deleting all channels, categories, roles, and nicknames"""
+    
+    # Check if user has administrator permission
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+    
+    # Defer immediately since this will take time
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        guild = interaction.guild
+        print(f"🔄 Starting complete server reset for {guild.name} requested by {interaction.user}")
+        
+        # Initial warning
+        warning_embed = discord.Embed(
+            title="⚠️ ⚠️ ⚠️ SERVER RESET STARTING ⚠️ ⚠️ ⚠️",
+            description="This will **DELETE EVERYTHING**:\n• All channels\n• All categories\n• All roles\n• All nicknames\n\n**This action is IRREVERSIBLE!**\n\nStarting in 5 seconds...",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=warning_embed)
+        await asyncio.sleep(5)
+        
+        # Counters
+        nickname_count = 0
+        channel_count = 0
+        voice_count = 0
+        forum_count = 0
+        category_count = 0
+        role_count = 0
+        
+        # Reset all member nicknames
+        print("📝 Resetting all member nicknames...")
+        for member in guild.members:
+            if member.nick and not member.bot:
+                try:
+                    await handle_rate_limit(
+                        member.edit(nick=None, reason=f"Server reset by {interaction.user}"),
+                        f"resetting nickname for {member}"
+                    )
+                    nickname_count += 1
+                    print(f"📝 Reset nickname for {member.display_name}")
+                except discord.Forbidden:
+                    print(f"❌ No permission to reset nickname for {member.display_name}")
+                except Exception as e:
+                    print(f"⚠️ Error resetting nickname for {member.display_name}: {e}")
+        print(f"✅ Reset {nickname_count} nicknames")
+        
+        # Delete all text channels
+        print("🗑️ Deleting all text channels...")
+        for channel in guild.text_channels:
+            try:
+                await channel.delete(reason=f"Server reset by {interaction.user}")
+                channel_count += 1
+                print(f"🗑️ Deleted text channel: #{channel.name}")
+            except discord.Forbidden:
+                print(f"❌ No permission to delete channel #{channel.name}")
+            except Exception as e:
+                print(f"⚠️ Error deleting channel #{channel.name}: {e}")
+        
+        # Delete all voice channels
+        print("🗑️ Deleting all voice channels...")
+        for channel in guild.voice_channels:
+            try:
+                await channel.delete(reason=f"Server reset by {interaction.user}")
+                voice_count += 1
+                print(f"🗑️ Deleted voice channel: {channel.name}")
+            except discord.Forbidden:
+                print(f"❌ No permission to delete voice channel {channel.name}")
+            except Exception as e:
+                print(f"⚠️ Error deleting voice channel {channel.name}: {e}")
+        
+        # Delete all forum channels
+        print("🗑️ Deleting all forum channels...")
+        for channel in guild.channels:
+            if hasattr(channel, 'type') and channel.type == discord.ChannelType.forum:
+                try:
+                    await channel.delete(reason=f"Server reset by {interaction.user}")
+                    forum_count += 1
+                    print(f"🗑️ Deleted forum channel: #{channel.name}")
+                except discord.Forbidden:
+                    print(f"❌ No permission to delete forum #{channel.name}")
+                except Exception as e:
+                    print(f"⚠️ Error deleting forum #{channel.name}: {e}")
+        
+        # Delete all categories
+        print("🗑️ Deleting all categories...")
+        for category in guild.categories:
+            try:
+                await category.delete(reason=f"Server reset by {interaction.user}")
+                category_count += 1
+                print(f"🗑️ Deleted category: {category.name}")
+            except discord.Forbidden:
+                print(f"❌ No permission to delete category {category.name}")
+            except Exception as e:
+                print(f"⚠️ Error deleting category {category.name}: {e}")
+        
+        # Delete all custom roles (keep @everyone and bot roles)
+        print("🗑️ Deleting all custom roles...")
+        for role in guild.roles:
+            # Skip @everyone, bot roles, and roles higher than bot's highest role
+            if (role.name != "@everyone" and 
+                not role.managed and 
+                role < guild.me.top_role):
+                try:
+                    await role.delete(reason=f"Server reset by {interaction.user}")
+                    role_count += 1
+                    print(f"🗑️ Deleted role: {role.name}")
+                except discord.Forbidden:
+                    print(f"❌ No permission to delete role {role.name}")
+                except Exception as e:
+                    print(f"⚠️ Error deleting role {role.name}: {e}")
+        
+        # Send completion message
+        print("🧨 SERVER RESET COMPLETE!")
+        result_embed = discord.Embed(
+            title="✅ Server Reset Complete",
+            description="The server has been completely reset!",
+            color=discord.Color.green()
+        )
+        result_embed.add_field(name="Nicknames Reset", value=str(nickname_count), inline=True)
+        result_embed.add_field(name="Text Channels Deleted", value=str(channel_count), inline=True)
+        result_embed.add_field(name="Voice Channels Deleted", value=str(voice_count), inline=True)
+        result_embed.add_field(name="Forum Channels Deleted", value=str(forum_count), inline=True)
+        result_embed.add_field(name="Categories Deleted", value=str(category_count), inline=True)
+        result_embed.add_field(name="Roles Deleted", value=str(role_count), inline=True)
+        result_embed.set_footer(text="🏗️ Server is now completely clean and ready for fresh setup!")
+        
+        # Try to send to user (if they still have a DM-able relationship after reset)
+        try:
+            await interaction.user.send(embed=result_embed)
+            print(f"✅ Sent completion message to {interaction.user} via DM")
+        except:
+            print(f"⚠️ Could not send completion message to {interaction.user} (probably need to create a new channel)")
+        
+        print(f"📊 Summary:")
+        print(f"   • {nickname_count} nicknames reset")
+        print(f"   • {channel_count} text channels deleted")
+        print(f"   • {voice_count} voice channels deleted") 
+        print(f"   • {forum_count} forum channels deleted")
+        print(f"   • {category_count} categories deleted")
+        print(f"   • {role_count} roles deleted")
+        
+    except Exception as e:
+        error_msg = f"❌ Error during server reset: {str(e)}"
+        try:
+            await interaction.followup.send(error_msg)
+        except:
+            # If followup fails, try to DM the user
+            try:
+                await interaction.user.send(error_msg)
+            except:
+                print(error_msg)
+        print(f"❌ Server reset error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 if __name__ == "__main__":
     # Start a simple HTTP health check server for Fly.io
     # This prevents auto-stop since Fly.io sees the machine as "active"
