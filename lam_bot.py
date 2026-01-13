@@ -2969,6 +2969,11 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
 
     # Extract folder ID from the Google Drive link
     folder_id = None
+
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
     if "drive.google.com/drive/folders/" in folder_link:
         try:
             # Extract folder ID from URL like: https://drive.google.com/drive/folders/1drRK7pSdCpbqzJfaDhFtKlYUrf_uYsN8?usp=sharing
