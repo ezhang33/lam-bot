@@ -605,12 +605,8 @@ async def setup_building_structure(guild, building, first_event, room=None):
                 # Create event channel
                 event_channel = await get_or_create_channel(guild, channel_name, category, event_role)
 
-                # After creating the event channel, search for test materials if this is an event-specific role
-                priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner"]
-                if first_event not in priority_roles:
-                    print(f"🚀 DEBUG: Starting test folder search after channel creation for: {first_event}")
-                    # This is an event-specific role, search for test folder now that channel exists
-                    asyncio.create_task(search_and_share_test_folder(guild, first_event))
+                # Note: Test materials are no longer automatically shared
+                # Use /sendtestmaterials command to manually share test materials for events
 
 async def search_and_share_test_folder(guild, role_name):
     """Search for test materials folder and share with event participants"""
@@ -4755,6 +4751,80 @@ async def active_tickets_command(interaction: discord.Interaction):
         traceback.print_exc()
 
 
+@bot.tree.command(name="sendtestmaterials", description="Send test materials to all event channels (Admin only)")
+async def send_test_materials_command(interaction: discord.Interaction):
+    """Manually trigger test materials search and sharing for all events"""
+    # Admin only
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        guild = interaction.guild
+        
+        print(f"📚 Manual test materials request by {interaction.user} for all events")
+        
+        # Check if we have a spreadsheet connected
+        guild_id = guild.id
+        if guild_id not in spreadsheets:
+            await interaction.followup.send(
+                "❌ No spreadsheet connected for this server!\n\n"
+                "Use `/entertemplate` to connect to a Google Drive folder first.",
+                ephemeral=True
+            )
+            return
+        
+        # Get all roles in the server
+        priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+        
+        # Find all event roles (roles that aren't priority/system roles)
+        event_roles = []
+        for role in guild.roles:
+            # Skip @everyone, bot-managed roles, and priority roles
+            if (role.name != "@everyone" and 
+                not role.managed and 
+                role.name not in priority_roles and
+                role.name not in chapter_role_names):  # Skip chapter roles too
+                event_roles.append(role.name)
+        
+        if not event_roles:
+            await interaction.followup.send(
+                "❌ No event roles found in this server!\n\n"
+                "Make sure you've run `/entertemplate` to create event roles first.",
+                ephemeral=True
+            )
+            return
+        
+        # Send initial status
+        await interaction.followup.send(
+            f"🔍 Searching for test materials for {len(event_roles)} event(s)...\n\n"
+            f"This may take a while. Check the event channels for results.",
+            ephemeral=True
+        )
+        
+        # Loop through all event roles and send test materials
+        success_count = 0
+        for role_name in event_roles:
+            try:
+                print(f"📚 Searching test materials for: {role_name}")
+                await search_and_share_test_folder(guild, role_name)
+                success_count += 1
+                # Small delay to avoid rate limiting
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                print(f"⚠️ Error sending test materials for {role_name}: {e}")
+        
+        print(f"✅ Test materials command completed: {success_count}/{len(event_roles)} events processed")
+        
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error sending test materials: {str(e)}", ephemeral=True)
+        print(f"❌ Send test materials error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 @bot.tree.command(name="cacheinfo", description="Show cached spreadsheet connection info (Admin only)")
 async def cache_info_command(interaction: discord.Interaction):
     """Show information about the cached spreadsheet connection"""
@@ -4884,7 +4954,7 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
     # Check if user has the admin role
     sad_face_role = discord.utils.get(interaction.user.roles, name=":(")
     if not sad_face_role:
-        await interaction.followup.send("❌ You need the `:( ` role to use this command!", ephemeral=True)
+        await interaction.followup.send("❌ You need a special role to use this command!", ephemeral=True)
         return
 
     # Use current channel if no channel specified
@@ -5030,6 +5100,20 @@ async def reset_server_command(interaction: discord.Interaction):
                 except Exception as e:
                     print(f"⚠️ Error deleting role {role.name}: {e}")
 
+        # Create a welcome channel after everything is deleted
+        print("🏗️ Creating welcome channel...")
+        welcome_channel = None
+        try:
+            welcome_channel = await guild.create_text_channel(
+                "welcome",
+                reason=f"Created after server reset by {interaction.user}"
+            )
+            print(f"✅ Created welcome channel: #{welcome_channel.name}")
+        except discord.Forbidden:
+            print(f"❌ No permission to create welcome channel")
+        except Exception as e:
+            print(f"⚠️ Error creating welcome channel: {e}")
+
         # Send completion message
         print("🧨 SERVER RESET COMPLETE!")
         result_embed = discord.Embed(
@@ -5045,12 +5129,22 @@ async def reset_server_command(interaction: discord.Interaction):
         result_embed.add_field(name="Roles Deleted", value=str(role_count), inline=True)
         result_embed.set_footer(text="🏗️ Server is now completely clean and ready for fresh setup!")
 
-        # Try to send to user (if they still have a DM-able relationship after reset)
+        # Try to send to user via DM first
+        sent_dm = False
         try:
             await interaction.user.send(embed=result_embed)
             print(f"✅ Sent completion message to {interaction.user} via DM")
+            sent_dm = True
         except:
-            print(f"⚠️ Could not send completion message to {interaction.user} (probably need to create a new channel)")
+            print(f"⚠️ Could not send completion message to {interaction.user} via DM")
+
+        # If DM failed and we created a welcome channel, send there
+        if not sent_dm and welcome_channel:
+            try:
+                await welcome_channel.send(f"{interaction.user.mention}", embed=result_embed)
+                print(f"✅ Sent completion message to #{welcome_channel.name}")
+            except Exception as e:
+                print(f"⚠️ Could not send completion message to welcome channel: {e}")
 
         print(f"📊 Summary:")
         print(f"   • {nickname_count} nicknames reset")
