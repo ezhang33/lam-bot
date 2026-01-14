@@ -4356,7 +4356,7 @@ async def assign_runner_zones_command(interaction: discord.Interaction):
     )
 
 
-@tasks.loop(minutes=1)
+@tasks.loop(minutes=60)
 async def sync_members():
     """Every minute, read each guild's spreadsheet and invite any new Discord IDs."""
     print("🔄 Running member sync...")
@@ -4984,6 +4984,104 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
         await interaction.followup.send(f"❌ Error sending message: {str(e)}", ephemeral=True)
         print(f"❌ Error in /msg command: {e}")
 
+@bot.tree.command(name="rolereset", description="Reset the server - roles + nicknames (Admin only)")
+async def role_reset_command(interaction: discord.Interaction):
+    """Reset the roles and nicknames"""
+
+    # Check if user has administrator permission
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
+    # Defer immediately since this will take time
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        guild = interaction.guild
+        print(f"🔄 Starting role reset for {guild.name} requested by {interaction.user}")
+
+        # Counters
+        nickname_count = 0
+        role_count = 0
+
+        # Reset all member nicknames
+        print("📝 Resetting all member nicknames...")
+        for member in guild.members:
+            if member.nick and not member.bot:
+                try:
+                    await handle_rate_limit(
+                        member.edit(nick=None, reason=f"Role reset by {interaction.user}"),
+                        f"resetting nickname for {member}"
+                    )
+                    nickname_count += 1
+                    print(f"📝 Reset nickname for {member.display_name}")
+                except discord.Forbidden:
+                    print(f"❌ No permission to reset nickname for {member.display_name}")
+                except Exception as e:
+                    print(f"⚠️ Error resetting nickname for {member.display_name}: {e}")
+        print(f"✅ Reset {nickname_count} nicknames")
+
+        # Delete all custom roles (keep @everyone and bot roles)
+        print("🗑️ Deleting all custom roles...")
+        for role in guild.roles:
+            # Skip @everyone, bot roles, and roles higher than bot's highest role
+            if (role.name != "@everyone" and
+                not role.managed and
+                role < guild.me.top_role):
+                try:
+                    await role.delete(reason=f"Role reset by {interaction.user}")
+                    role_count += 1
+                    print(f"🗑️ Deleted role: {role.name}")
+                except discord.Forbidden:
+                    print(f"❌ No permission to delete role {role.name}")
+                except Exception as e:
+                    print(f"⚠️ Error deleting role {role.name}: {e}")
+
+        # Fetch all rows from this guild's sheet
+        data = sheets[guild.id].get_all_records()
+
+        print(f"🔄 Syncing members for guild: {guild.name}")
+        sync_results = await perform_member_sync(guild, data)
+        print(f"✅ Sync complete for {guild.name}. Processed {sync_results['processed']} valid Discord IDs.")
+
+        result_embed.add_field(name="Nicknames Reset", value=str(nickname_count), inline=True)
+        result_embed.add_field(name="Roles Deleted", value=str(role_count), inline=True)
+        result_embed.set_footer(text="🏗️ Roles and nicknames have been refreshed!")
+
+        # Try to send to user via DM first
+        sent_dm = False
+        try:
+            await interaction.user.send(embed=result_embed)
+            print(f"✅ Sent completion message to {interaction.user} via DM")
+            sent_dm = True
+        except:
+            print(f"⚠️ Could not send completion message to {interaction.user} via DM")
+
+        # If DM failed and we created a welcome channel, send there
+        if not sent_dm and welcome_channel:
+            try:
+                await welcome_channel.send(f"{interaction.user.mention}", embed=result_embed)
+                print(f"✅ Sent completion message to #{welcome_channel.name}")
+            except Exception as e:
+                print(f"⚠️ Could not send completion message to welcome channel: {e}")
+
+        print(f"📊 Summary:")
+        print(f"   • {nickname_count} nicknames reset")
+        print(f"   • {role_count} roles deleted")
+
+    except Exception as e:
+        error_msg = f"❌ Error during role reset: {str(e)}"
+        try:
+            await interaction.followup.send(error_msg)
+        except:
+            # If followup fails, try to DM the user
+            try:
+                await interaction.user.send(error_msg)
+            except:
+                print(error_msg)
+        print(f"❌ Role reset error: {e}")
+        import traceback
+        traceback.print_exc()
 
 @bot.tree.command(name="resetserver", description="⚠️ DANGER: Completely reset the server - deletes channels, roles, categories (Admin only)")
 async def reset_server_command(interaction: discord.Interaction):
@@ -5100,16 +5198,19 @@ async def reset_server_command(interaction: discord.Interaction):
                 except Exception as e:
                     print(f"⚠️ Error deleting role {role.name}: {e}")
 
-        # Set up static channels after everything is deleted
-        print("🏗️ Setting up static channels...")
+        # Create a welcome channel after everything is deleted
+        print("🏗️ Creating welcome channel...")
         welcome_channel = None
         try:
-            await setup_static_channels_for_guild(guild)
-            # Get the welcome channel that was just created
-            welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
-            print(f"✅ Static channels setup complete")
+            welcome_channel = await guild.create_text_channel(
+                "welcome",
+                reason=f"Created after server reset by {interaction.user}"
+            )
+            print(f"✅ Created welcome channel: #{welcome_channel.name}")
+        except discord.Forbidden:
+            print(f"❌ No permission to create welcome channel")
         except Exception as e:
-            print(f"⚠️ Error setting up static channels: {e}")
+            print(f"⚠️ Error creating welcome channel: {e}")
 
         # Send completion message
         print("🧨 SERVER RESET COMPLETE!")
