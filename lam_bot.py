@@ -3832,7 +3832,7 @@ async def reload_commands_command(interaction: discord.Interaction):
             if synced:
                 command_list = []
                 for command in synced:
-                    command_list.append(f"• `/{command.name}` - {command.description}")
+                    command_list.append(f"• `/{command.name}`")
 
                 embed.add_field(
                     name="📋 Available Commands",
@@ -4763,9 +4763,9 @@ async def send_test_materials_command(interaction: discord.Interaction):
 
     try:
         guild = interaction.guild
-        
+
         print(f"📚 Manual test materials request by {interaction.user} for all events")
-        
+
         # Check if we have a spreadsheet connected
         guild_id = guild.id
         if guild_id not in spreadsheets:
@@ -4775,20 +4775,20 @@ async def send_test_materials_command(interaction: discord.Interaction):
                 ephemeral=True
             )
             return
-        
+
         # Get all roles in the server
         priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
-        
+
         # Find all event roles (roles that aren't priority/system roles)
         event_roles = []
         for role in guild.roles:
             # Skip @everyone, bot-managed roles, and priority roles
-            if (role.name != "@everyone" and 
-                not role.managed and 
+            if (role.name != "@everyone" and
+                not role.managed and
                 role.name not in priority_roles and
                 role.name not in chapter_role_names):  # Skip chapter roles too
                 event_roles.append(role.name)
-        
+
         if not event_roles:
             await interaction.followup.send(
                 "❌ No event roles found in this server!\n\n"
@@ -4796,14 +4796,14 @@ async def send_test_materials_command(interaction: discord.Interaction):
                 ephemeral=True
             )
             return
-        
+
         # Send initial status
         await interaction.followup.send(
             f"🔍 Searching for test materials for {len(event_roles)} event(s)...\n\n"
             f"This may take a while. Check the event channels for results.",
             ephemeral=True
         )
-        
+
         # Loop through all event roles and send test materials
         success_count = 0
         for role_name in event_roles:
@@ -4815,9 +4815,9 @@ async def send_test_materials_command(interaction: discord.Interaction):
                 await asyncio.sleep(0.5)
             except Exception as e:
                 print(f"⚠️ Error sending test materials for {role_name}: {e}")
-        
+
         print(f"✅ Test materials command completed: {success_count}/{len(event_roles)} events processed")
-        
+
     except Exception as e:
         await interaction.followup.send(f"❌ Error sending test materials: {str(e)}", ephemeral=True)
         print(f"❌ Send test materials error: {e}")
@@ -4947,7 +4947,7 @@ async def dummy1_command(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
-        
+
 @bot.tree.command(name="dummy2", description="Dummy 2 (Admin only)")
 async def dummy2_command(interaction: discord.Interaction):
     """Dummy Command 2"""
