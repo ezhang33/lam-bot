@@ -4939,6 +4939,41 @@ async def clear_cache_command(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ Error clearing cache: {str(e)}")
         print(f"❌ Clear cache error: {e}")
 
+@bot.tree.command(name="dummy1", description="Dummy 1 (Admin only)")
+async def dummy1_command(interaction: discord.Interaction):
+    """Dummy Command 1"""
+
+    # Check if user has administrator permission
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+        
+@bot.tree.command(name="dummy2", description="Dummy 2 (Admin only)")
+async def dummy2_command(interaction: discord.Interaction):
+    """Dummy Command 2"""
+
+    # Check if user has administrator permission
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
+@bot.tree.command(name="dummy3", description="Dummy 3 (Admin only)")
+async def dummy3_command(interaction: discord.Interaction):
+    """Dummy Command 3"""
+
+    # Check if user has administrator permission
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
+@bot.tree.command(name="dummy4", description="Dummy 4 (Admin only)")
+async def dummy4_command(interaction: discord.Interaction):
+    """Dummy Command 4"""
+
+    # Check if user has administrator permission
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
 
 @bot.tree.command(name="msg", description="Send a message as the bot (admin only)")
 @app_commands.describe(
