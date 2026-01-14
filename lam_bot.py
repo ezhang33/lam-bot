@@ -288,7 +288,7 @@ async def get_or_create_role(guild, role_name):
         # Custom color mapping for specific roles
         custom_role_colors = {
             # Team roles only
-            "Slacker": discord.Color.orange(),
+            "Runner": discord.Color.orange(),
             "Awards": discord.Color.yellow(),
             "Volunteer": discord.Color.blue(),
             "Lead Event Supervisor": discord.Color.yellow(),
@@ -342,9 +342,9 @@ async def get_or_create_role(guild, role_name):
                 )
                 print(f"🆕 Created new role: '{role_name}' (color: {color_name})")
 
-                # If we just created the Slacker role, ensure it has access to Tournament Officials channels
-                if role_name == "Slacker":
-                    await ensure_slacker_tournament_officials_access(guild, role)
+                # If we just created the Runner role, ensure it has access to Tournament Officials channels
+                if role_name == "Runner":
+                    await ensure_runner_tournament_officials_access(guild, role)
 
                 # Note: Test folder search is now handled in setup_building_structure after channels are created
                 # to ensure the target channel exists when we try to post the message
@@ -426,18 +426,18 @@ async def get_or_create_channel(guild, channel_name, category, event_role=None, 
         # Set up permissions
         overwrites = {}
 
-        # Give Slacker role access only to static channels (not building/event channels)
-        slacker_role = discord.utils.get(guild.roles, name="Slacker")
+        # Give Runner role access only to static channels (not building/event channels)
+        runner_role = discord.utils.get(guild.roles, name="Runner")
         static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
-        if slacker_role and category and category.name in static_categories:
-            overwrites[slacker_role] = discord.PermissionOverwrite(
+        if runner_role and category and category.name in static_categories:
+            overwrites[runner_role] = discord.PermissionOverwrite(
                 read_messages=True,
                 send_messages=True,
                 read_message_history=True
             )
 
         if event_role:
-            # Event-specific channel: only event role can see it (plus Slacker)
+            # Event-specific channel: only event role can see it (plus Runner)
             overwrites[guild.default_role] = discord.PermissionOverwrite(read_messages=False)
             overwrites[event_role] = discord.PermissionOverwrite(
                 read_messages=True,
@@ -552,7 +552,7 @@ async def setup_building_structure(guild, building, first_event, room=None):
     print(f"🏗️ DEBUG: Setting up building structure - Building: '{building}', Event: '{first_event}', Room: '{room}'")
 
     # Skip creating building chat for priority/custom roles (only create for actual event roles)
-    priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Slacker", "VIPer"]
+    priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
     if first_event and first_event in priority_roles:
         print(f"⏭️ Skipping building structure creation for priority role '{first_event}' in {building} (only event roles get building structures)")
         return
@@ -564,8 +564,8 @@ async def setup_building_structure(guild, building, first_event, room=None):
     if not category:
         return
 
-    # Get Slacker role to ensure access
-    slacker_role = discord.utils.get(guild.roles, name="Slacker")
+    # Get Runner role to ensure access
+    runner_role = discord.utils.get(guild.roles, name="Runner")
 
     # Create general building chat channel (restricted to people with events in this building)
     building_chat_name = f"{sanitize_for_discord(building)}-chat"
@@ -588,9 +588,9 @@ async def setup_building_structure(guild, building, first_event, room=None):
         # Get or create the event role
         event_role = await get_or_create_role(guild, first_event)
         if event_role:
-            # Skip giving building chat access to Slacker role
-            # (Slackers use the existing "slacker" channel in Tournament Officials)
-            if first_event.lower() != "slacker":
+            # Skip giving building chat access to Runner role
+            # (Runners use the existing "runner" channel in Tournament Officials)
+            if first_event.lower() != "runner":
                 # Add the event role to the building chat permissions
                 await add_role_to_building_chat(building_chat, event_role)
 
@@ -606,7 +606,7 @@ async def setup_building_structure(guild, building, first_event, room=None):
                 event_channel = await get_or_create_channel(guild, channel_name, category, event_role)
 
                 # After creating the event channel, search for test materials if this is an event-specific role
-                priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Slacker"]
+                priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner"]
                 if first_event not in priority_roles:
                     print(f"🚀 DEBUG: Starting test folder search after channel creation for: {first_event}")
                     # This is an event-specific role, search for test folder now that channel exists
@@ -758,36 +758,32 @@ async def search_and_share_test_folder(guild, role_name):
 
             file_links.append(f"• {emoji} [**{file_name}**]({file_link})")
 
-        # Split into chunks if too long for Discord (2000 character limit per field)
-        files_text = "\n".join(file_links)
-        if len(files_text) > 1900:  # Leave some buffer
-            # Split into multiple fields
-            chunk_size = 1900
-            chunks = []
-            current_chunk = ""
+        # Split into chunks if too long for Discord (1024 character limit per field)
+        # Discord's limit is 1024 chars per field, so we use 1000 to be safe
+        chunk_size = 1000
+        chunks = []
+        current_chunk = ""
 
-            for link in file_links:
-                if len(current_chunk + link + "\n") > chunk_size:
+        for link in file_links:
+            # Check if adding this link would exceed the limit
+            if len(current_chunk + link + "\n") > chunk_size:
+                # Save current chunk and start a new one
+                if current_chunk.strip():
                     chunks.append(current_chunk.strip())
-                    current_chunk = link + "\n"
-                else:
-                    current_chunk += link + "\n"
+                current_chunk = link + "\n"
+            else:
+                current_chunk += link + "\n"
 
-            if current_chunk.strip():
-                chunks.append(current_chunk.strip())
+        # Don't forget the last chunk
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
 
-            # Add chunks as separate fields
-            for i, chunk in enumerate(chunks):
-                field_name = "📋 Test Materials" if i == 0 else f"📋 Test Materials (continued {i+1})"
-                embed.add_field(name=field_name, value=chunk, inline=False)
-        else:
-            embed.add_field(name="📋 Test Materials", value=files_text, inline=False)
-
-        # Post the embed to the channel
+        # Send the first message with the main embed
+        embed.add_field(name="📋 Test Materials", value=chunks[0] if chunks else "No files found", inline=False)
         message = await target_channel.send(embed=embed)
         print(f"📚 Shared test materials for {role_name} in #{target_channel.name}")
 
-        # Pin the message so it's always visible
+        # Pin the first message
         try:
             await message.pin()
             print(f"📌 Pinned test materials message in #{target_channel.name}")
@@ -795,6 +791,18 @@ async def search_and_share_test_folder(guild, role_name):
             print(f"⚠️ No permission to pin message in #{target_channel.name}")
         except Exception as pin_error:
             print(f"⚠️ Error pinning message in #{target_channel.name}: {pin_error}")
+
+        # Send additional messages for remaining chunks
+        if len(chunks) > 1:
+            for i, chunk in enumerate(chunks[1:], start=2):
+                continuation_embed = discord.Embed(
+                    title=f"📚 Test Materials for {role_name} (continued {i})",
+                    description="",
+                    color=discord.Color.green()
+                )
+                continuation_embed.add_field(name="📋 Test Materials", value=chunk, inline=False)
+                await target_channel.send(embed=continuation_embed)
+                print(f"📚 Sent continuation message {i} for {role_name}")
 
         # Check if scoring message already exists in pinned messages
         scoring_message_exists = False
@@ -1047,36 +1055,32 @@ async def search_and_share_useful_links(guild):
 
             file_links.append(f"• {emoji} [**{file_name}**]({file_link})")
 
-        # Split into chunks if too long for Discord (2000 character limit per field)
-        files_text = "\n".join(file_links)
-        if len(files_text) > 1900:  # Leave some buffer
-            # Split into multiple fields
-            chunk_size = 1900
-            chunks = []
-            current_chunk = ""
+        # Split into chunks if too long for Discord (1024 character limit per field)
+        # Discord's limit is 1024 chars per field, so we use 1000 to be safe
+        chunk_size = 1000
+        chunks = []
+        current_chunk = ""
 
-            for link in file_links:
-                if len(current_chunk + link + "\n") > chunk_size:
+        for link in file_links:
+            # Check if adding this link would exceed the limit
+            if len(current_chunk + link + "\n") > chunk_size:
+                # Save current chunk and start a new one
+                if current_chunk.strip():
                     chunks.append(current_chunk.strip())
-                    current_chunk = link + "\n"
-                else:
-                    current_chunk += link + "\n"
+                current_chunk = link + "\n"
+            else:
+                current_chunk += link + "\n"
 
-            if current_chunk.strip():
-                chunks.append(current_chunk.strip())
+        # Don't forget the last chunk
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
 
-            # Add chunks as separate fields
-            for i, chunk in enumerate(chunks):
-                field_name = "📋 Useful Links" if i == 0 else f"📋 Useful Links (continued {i+1})"
-                embed.add_field(name=field_name, value=chunk, inline=False)
-        else:
-            embed.add_field(name="📋 Useful Links", value=files_text, inline=False)
-
-        # Post the embed to the channel
+        # Send the first message with the main embed
+        embed.add_field(name="📋 Useful Links", value=chunks[0] if chunks else "No files found", inline=False)
         message = await target_channel.send(embed=embed)
         print(f"🔗 Shared useful links in #{target_channel.name}")
 
-        # Pin the message so it's always visible
+        # Pin the first message
         try:
             await message.pin()
             print(f"📌 Pinned useful links message in #{target_channel.name}")
@@ -1085,20 +1089,32 @@ async def search_and_share_useful_links(guild):
         except Exception as pin_error:
             print(f"⚠️ Error pinning message in #{target_channel.name}: {pin_error}")
 
+        # Send additional messages for remaining chunks
+        if len(chunks) > 1:
+            for i, chunk in enumerate(chunks[1:], start=2):
+                continuation_embed = discord.Embed(
+                    title=f"🔗 Useful Links & Resources (continued {i})",
+                    description="",
+                    color=discord.Color.green()
+                )
+                continuation_embed.add_field(name="📋 Useful Links", value=chunk, inline=False)
+                await target_channel.send(embed=continuation_embed)
+                print(f"🔗 Sent continuation message {i} for useful links")
+
     except Exception as e:
         print(f"❌ Error searching for Useful Links folder: {e}")
 
-async def add_slacker_access(channel, slacker_role):
-    """Add Slacker role access to a channel"""
-    if not channel or not slacker_role:
+async def add_runner_access(channel, runner_role):
+    """Add Runner role access to a channel"""
+    if not channel or not runner_role:
         return
 
     try:
         # Get current overwrites
         overwrites = channel.overwrites
 
-        # Add Slacker role with full permissions
-        overwrites[slacker_role] = discord.PermissionOverwrite(
+        # Add Runner role with full permissions
+        overwrites[runner_role] = discord.PermissionOverwrite(
             read_messages=True,
             send_messages=True,
             read_message_history=True
@@ -1106,22 +1122,22 @@ async def add_slacker_access(channel, slacker_role):
 
         # Update channel permissions
         await handle_rate_limit(
-            channel.edit(overwrites=overwrites, reason=f"Added {slacker_role.name} access to all channels"),
+            channel.edit(overwrites=overwrites, reason=f"Added {runner_role.name} access to all channels"),
             f"editing channel '{channel.name}' permissions"
         )
-        print(f"🔑 Added {slacker_role.name} access to #{channel.name}")
+        print(f"🔑 Added {runner_role.name} access to #{channel.name}")
 
     except discord.Forbidden:
         print(f"❌ No permission to edit channel permissions for #{channel.name}")
     except Exception as e:
         print(f"❌ Error updating channel permissions for #{channel.name}: {e}")
 
-async def ensure_slacker_tournament_officials_access(guild, slacker_role):
-    """Ensure Slacker role has access to Tournament Officials channels"""
-    if not slacker_role:
+async def ensure_runner_tournament_officials_access(guild, runner_role):
+    """Ensure Runner role has access to Tournament Officials channels"""
+    if not runner_role:
         return
 
-    print(f"🔑 Ensuring {slacker_role.name} access to Tournament Officials channels...")
+    print(f"🔑 Ensuring {runner_role.name} access to Tournament Officials channels...")
 
     # Get Tournament Officials category
     tournament_officials_category = discord.utils.get(guild.categories, name="Tournament Officials")
@@ -1130,19 +1146,19 @@ async def ensure_slacker_tournament_officials_access(guild, slacker_role):
         return
 
     # List of Tournament Officials channels
-    official_channels = ["slacker", "links", "scoring", "awards-ceremony"]
+    official_channels = ["runner", "scoring", "awards-ceremony"]
 
     added_count = 0
     for channel_name in official_channels:
         channel = discord.utils.get(guild.text_channels, name=channel_name)
         if channel and channel.category == tournament_officials_category:
             try:
-                await add_slacker_access(channel, slacker_role)
+                await add_runner_access(channel, runner_role)
                 added_count += 1
             except Exception as e:
-                print(f"❌ Error adding Slacker access to #{channel_name}: {e}")
+                print(f"❌ Error adding Runner access to #{channel_name}: {e}")
 
-    print(f"✅ Added {slacker_role.name} access to {added_count} Tournament Officials channels")
+    print(f"✅ Added {runner_role.name} access to {added_count} Tournament Officials channels")
 
 async def send_building_welcome_message(guild, building_chat, building):
     """Send an initial welcome message to a building chat with all events in that building"""
@@ -1450,8 +1466,8 @@ async def setup_static_channels_for_guild(guild):
 
     print(f"🏗️ Setting up static channels for {guild.name}...")
 
-    # Get or create Slacker role for permissions
-    slacker_role = await get_or_create_role(guild, "Slacker")
+    # Get or create Runner role for permissions
+    runner_role = await get_or_create_role(guild, "Runner")
     # Get or create Awards role for awards-ceremony access
     awards_role = await get_or_create_role(guild, "Awards")
 
@@ -1471,8 +1487,8 @@ async def setup_static_channels_for_guild(guild):
     print("📋 Setting up Tournament Officials category...")
     tournament_officials_category = await get_or_create_category(guild, "Tournament Officials")
     if tournament_officials_category:
-        # Create channels in Tournament Officials category (restricted to Slacker role only)
-        official_channels = ["slacker", "links", "scoring", "awards-ceremony"]
+        # Create channels in Tournament Officials category (restricted to Runner role only)
+        official_channels = ["runner", "scoring", "awards-ceremony"]
         for channel_name in official_channels:
             # Check if channel already exists
             channel = discord.utils.get(guild.text_channels, name=channel_name)
@@ -1482,9 +1498,9 @@ async def setup_static_channels_for_guild(guild):
                     overwrites = {}
                     # Hide from @everyone
                     overwrites[guild.default_role] = discord.PermissionOverwrite(read_messages=False)
-                    # Give Slacker role full access
-                    if slacker_role:
-                        overwrites[slacker_role] = discord.PermissionOverwrite(
+                    # Give Runner role full access
+                    if runner_role:
+                        overwrites[runner_role] = discord.PermissionOverwrite(
                             read_messages=True,
                             send_messages=True,
                             read_message_history=True
@@ -1507,22 +1523,22 @@ async def setup_static_channels_for_guild(guild):
                         f"creating channel '{channel_name}'"
                     )
                     if channel_name == "awards-ceremony":
-                        print(f"📺 Created restricted channel: '#{channel_name}' (Slacker + Awards)")
+                        print(f"📺 Created restricted channel: '#{channel_name}' (Runner + Awards)")
                     else:
-                        print(f"📺 Created restricted channel: '#{channel_name}' (Slacker only)")
+                        print(f"📺 Created restricted channel: '#{channel_name}' (Runner only)")
 
-                    # Ensure Slacker access is properly added after channel creation
-                    if slacker_role:
+                    # Ensure Runner access is properly added after channel creation
+                    if runner_role:
                         try:
-                            await add_slacker_access(channel, slacker_role)
-                            print(f"✅ Ensured Slacker access to #{channel_name}")
+                            await add_runner_access(channel, runner_role)
+                            print(f"✅ Ensured Runner access to #{channel_name}")
                         except Exception as e:
-                            print(f"❌ Error ensuring Slacker access to #{channel_name}: {e}")
+                            print(f"❌ Error ensuring Runner access to #{channel_name}: {e}")
 
                     # Ensure Awards role access to awards-ceremony channel
                     if channel_name == "awards-ceremony" and awards_role:
                         try:
-                            await add_slacker_access(channel, awards_role)  # Reuse the same function
+                            await add_runner_access(channel, awards_role)  # Reuse the same function
                             print(f"✅ Ensured Awards role access to #{channel_name}")
                         except Exception as e:
                             print(f"❌ Error ensuring Awards access to #{channel_name}: {e}")
@@ -1538,9 +1554,9 @@ async def setup_static_channels_for_guild(guild):
                     overwrites = channel.overwrites
                     # Hide from @everyone
                     overwrites[guild.default_role] = discord.PermissionOverwrite(read_messages=False)
-                    # Give Slacker role full access
-                    if slacker_role:
-                        overwrites[slacker_role] = discord.PermissionOverwrite(
+                    # Give Runner role full access
+                    if runner_role:
+                        overwrites[runner_role] = discord.PermissionOverwrite(
                             read_messages=True,
                             send_messages=True,
                             read_message_history=True
@@ -1554,28 +1570,28 @@ async def setup_static_channels_for_guild(guild):
                         )
 
                     await handle_rate_limit(
-                        channel.edit(overwrites=overwrites, reason="Updated to restrict to Slacker role only"),
+                        channel.edit(overwrites=overwrites, reason="Updated to restrict to Runner role only"),
                         f"editing channel '{channel_name}' permissions"
                     )
                     if channel_name == "awards-ceremony":
-                        print(f"🔒 Updated #{channel_name} to be Slacker + Awards")
+                        print(f"🔒 Updated #{channel_name} to be Runner + Awards")
                     else:
-                        print(f"🔒 Updated #{channel_name} to be Slacker-only")
+                        print(f"🔒 Updated #{channel_name} to be Runner-only")
                 except Exception as e:
                     print(f"❌ Error updating permissions for #{channel_name}: {e}")
 
-                # Ensure Slacker access is properly added after channel creation/update
-                if slacker_role:
+                # Ensure Runner access is properly added after channel creation/update
+                if runner_role:
                     try:
-                        await add_slacker_access(channel, slacker_role)
-                        print(f"✅ Ensured Slacker access to #{channel_name}")
+                        await add_runner_access(channel, runner_role)
+                        print(f"✅ Ensured Runner access to #{channel_name}")
                     except Exception as e:
-                        print(f"❌ Error ensuring Slacker access to #{channel_name}: {e}")
+                        print(f"❌ Error ensuring Runner access to #{channel_name}: {e}")
 
                 # Ensure Awards role access to awards-ceremony channel
                 if channel_name == "awards-ceremony" and awards_role:
                     try:
-                        await add_slacker_access(channel, awards_role)  # Reuse the same function
+                        await add_runner_access(channel, awards_role)  # Reuse the same function
                         print(f"✅ Ensured Awards role access to #{channel_name}")
                     except Exception as e:
                         print(f"❌ Error ensuring Awards access to #{channel_name}: {e}")
@@ -1597,7 +1613,7 @@ async def setup_static_channels_for_guild(guild):
                     # Get current overwrites
                     overwrites = channel.overwrites
 
-                    # Add Slacker role with full permissions
+                    # Add Runner role with full permissions
                     overwrites[guild.default_role] = discord.PermissionOverwrite(
                         read_messages=True,
                         send_messages=False,
@@ -1630,9 +1646,9 @@ async def setup_static_channels_for_guild(guild):
             # Try to create forum channel
             try:
                 overwrites = {}
-                # Give Slacker role access to forum
-                if slacker_role:
-                    overwrites[slacker_role] = discord.PermissionOverwrite(
+                # Give Runner role access to forum
+                if runner_role:
+                    overwrites[runner_role] = discord.PermissionOverwrite(
                         read_messages=True,
                         send_messages=True,
                         read_message_history=True,
@@ -1684,7 +1700,7 @@ async def setup_static_channels_for_guild(guild):
         else:
             print(f"✅ Forum channel 'help' already exists")
 
-        # Slacker access to help channel will be handled automatically by the static category logic
+        # Runner access to help channel will be handled automatically by the static category logic
 
     print("✅ Finished setting up static channels")
 
@@ -1802,7 +1818,7 @@ async def move_bot_role_to_top_for_guild(guild):
         print(f"❌ Error moving bot role to top: {e}")
 
 async def organize_role_hierarchy_for_guild(guild):
-    """Organize roles in priority order: lambot, Slacker, Arbitrations, Photographer, Social Media, Lead Event Supervisor, Volunteer, :(, then others"""
+    """Organize roles in priority order: lambot, Runner, Arbitrations, Photographer, Social Media, Lead Event Supervisor, Volunteer, :(, then others"""
     if not guild:
         print("❌ Guild not provided!")
         return
@@ -1823,7 +1839,7 @@ async def organize_role_hierarchy_for_guild(guild):
         "Photographer",
         "Arbitrations",
         "Awards",
-        "Slacker",
+        "Runner",
         # Bot role will be handled separately as highest priority
     ]
 
@@ -1973,18 +1989,18 @@ async def organize_role_hierarchy_for_guild(guild):
         if "50013" in str(e):
             print("💡 This is a permissions issue. Please ensure the bot has 'Manage Roles' permission and is high in the role hierarchy.")
 
-async def remove_slacker_access_from_building_channels_for_guild(guild):
-    """Remove Slacker role access from building/event channels"""
+async def remove_runner_access_from_building_channels_for_guild(guild):
+    """Remove Runner role access from building/event channels"""
     if not guild:
         print("❌ Guild not provided!")
         return
 
-    slacker_role = discord.utils.get(guild.roles, name="Slacker")
-    if not slacker_role:
-        print("⚠️ Slacker role not found")
+    runner_role = discord.utils.get(guild.roles, name="Runner")
+    if not runner_role:
+        print("⚠️ Runner role not found")
         return
 
-    print(f"🚫 Removing {slacker_role.name} access from building/event channels...")
+    print(f"🚫 Removing {runner_role.name} access from building/event channels...")
 
     removed_count = 0
 
@@ -1994,37 +2010,35 @@ async def remove_slacker_access_from_building_channels_for_guild(guild):
             # Remove access from channels that are NOT in static categories
             if channel.category.name not in ["Welcome", "Tournament Officials", "Volunteers"]:
                 try:
-                    # Check if Slacker role has access to this channel
+                    # Check if Runner role has access to this channel
                     overwrites = channel.overwrites
-                    if slacker_role in overwrites:
-                        # Remove the Slacker role from overwrites
-                        del overwrites[slacker_role]
+                    if runner_role in overwrites:
+                        # Remove the Runner role from overwrites
+                        del overwrites[runner_role]
                         await handle_rate_limit(
-                            channel.edit(overwrites=overwrites, reason=f"Removed {slacker_role.name} access from building channel"),
+                            channel.edit(overwrites=overwrites, reason=f"Removed {runner_role.name} access from building channel"),
                             f"removing access from channel '{channel.name}'"
                         )
                         removed_count += 1
-                        print(f"🚫 Removed {slacker_role.name} access from #{channel.name}")
-                    building_zone == get_building_zone(guild.id, building)
-                    get_zone_slackers(guild.id, buidling_zone)
+                        print(f"🚫 Removed {runner_role.name} access from #{channel.name}")
 
                 except Exception as e:
-                    print(f"❌ Error removing Slacker access from #{channel.name}: {e}")
+                    print(f"❌ Error removing Runner access from #{channel.name}: {e}")
 
-    print(f"✅ Removed {slacker_role.name} access from {removed_count} building/event channels")
+    print(f"✅ Removed {runner_role.name} access from {removed_count} building/event channels")
 
-async def give_slacker_access_to_all_channels_for_guild(guild):
-    """Give Slacker role access only to static channels (not building/event channels)"""
+async def give_runner_access_to_all_channels_for_guild(guild):
+    """Give Runner role access only to static channels (not building/event channels)"""
     if not guild:
         print("❌ Guild not provided!")
         return
 
-    slacker_role = discord.utils.get(guild.roles, name="Slacker")
-    if not slacker_role:
-        print("⚠️ Slacker role not found, will be created when needed")
+    runner_role = discord.utils.get(guild.roles, name="Runner")
+    if not runner_role:
+        print("⚠️ Runner role not found, will be created when needed")
         return
 
-    print(f"🔑 Adding {slacker_role.name} access to static channels only...")
+    print(f"🔑 Adding {runner_role.name} access to static channels only...")
 
     welcome_channels = 0
     tournament_official_channels = 0
@@ -2036,35 +2050,35 @@ async def give_slacker_access_to_all_channels_for_guild(guild):
         if channel.category:
             if channel.category.name == "Welcome":
                 try:
-                    await add_slacker_access(channel, slacker_role)
+                    await add_runner_access(channel, runner_role)
                     welcome_channels += 1
-                    print(f"🔑 Added {slacker_role.name} access to #{channel.name} (Welcome)")
+                    print(f"🔑 Added {runner_role.name} access to #{channel.name} (Welcome)")
                 except Exception as e:
-                    print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
+                    print(f"❌ Error adding Runner access to #{channel.name}: {e}")
 
             elif channel.category.name == "Tournament Officials":
                 try:
-                    await add_slacker_access(channel, slacker_role)
+                    await add_runner_access(channel, runner_role)
                     tournament_official_channels += 1
-                    print(f"🔑 Added {slacker_role.name} access to #{channel.name} (Tournament Officials)")
+                    print(f"🔑 Added {runner_role.name} access to #{channel.name} (Tournament Officials)")
                 except Exception as e:
-                    print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
+                    print(f"❌ Error adding Runner access to #{channel.name}: {e}")
 
             # elif channel.category.name == "Chapters":
             #     try:
-            #         await add_slacker_access(channel, slacker_role)
+            #         await add_runner_access(channel, runner_role)
             #         volunteer_channels += 1
-            #         print(f"🔑 Added {slacker_role.name} access to #{channel.name} (Chapters)")
+            #         print(f"🔑 Added {runner_role.name} access to #{channel.name} (Chapters)")
             #     except Exception as e:
-            #         print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
+            #         print(f"❌ Error adding Runner access to #{channel.name}: {e}")
 
             elif channel.category.name == "Volunteers":
                 try:
-                    await add_slacker_access(channel, slacker_role)
+                    await add_runner_access(channel, runner_role)
                     volunteer_channels += 1
-                    print(f"🔑 Added {slacker_role.name} access to #{channel.name} (Volunteers)")
+                    print(f"🔑 Added {runner_role.name} access to #{channel.name} (Volunteers)")
                 except Exception as e:
-                    print(f"❌ Error adding Slacker access to #{channel.name}: {e}")
+                    print(f"❌ Error adding Runner access to #{channel.name}: {e}")
 
     # Add access to forum channels in static categories
     for channel in guild.channels:
@@ -2072,7 +2086,7 @@ async def give_slacker_access_to_all_channels_for_guild(guild):
             if channel.category.name in ["Welcome", "Tournament Officials", "Volunteers"]:
                 try:
                     overwrites = channel.overwrites
-                    overwrites[slacker_role] = discord.PermissionOverwrite(
+                    overwrites[runner_role] = discord.PermissionOverwrite(
                         read_messages=True,
                         send_messages=True,
                         read_message_history=True,
@@ -2080,20 +2094,20 @@ async def give_slacker_access_to_all_channels_for_guild(guild):
                         send_messages_in_threads=True
                     )
                     await handle_rate_limit(
-                        channel.edit(overwrites=overwrites, reason=f"Added {slacker_role.name} access"),
+                        channel.edit(overwrites=overwrites, reason=f"Added {runner_role.name} access"),
                         f"editing forum channel '{channel.name}' permissions"
                     )
-                    print(f"🔑 Added {slacker_role.name} access to #{channel.name} (forum in {channel.category.name})")
+                    print(f"🔑 Added {runner_role.name} access to #{channel.name} (forum in {channel.category.name})")
                     forum_channels += 1
                 except Exception as e:
-                    print(f"❌ Error adding Slacker access to forum #{channel.name}: {e}")
+                    print(f"❌ Error adding Runner access to forum #{channel.name}: {e}")
 
-    print(f"✅ Added {slacker_role.name} access to:")
+    print(f"✅ Added {runner_role.name} access to:")
     print(f"   • {welcome_channels} Welcome channels")
     print(f"   • {tournament_official_channels} Tournament Officials channels")
     print(f"   • {volunteer_channels} Volunteers channels")
     print(f"   • {forum_channels} forum channels")
-    print(f"🔑 Total: {welcome_channels + tournament_official_channels + volunteer_channels + forum_channels} channels with Slacker access")
+    print(f"🔑 Total: {welcome_channels + tournament_official_channels + volunteer_channels + forum_channels} channels with Runner access")
     print(f"🚫 Building/event channels are restricted to event participants only")
 
 async def setup_ezhang_admin_role(guild):
@@ -2160,10 +2174,10 @@ async def on_ready():
             await move_bot_role_to_top_for_guild(guild)
             print(f"🎭 Organizing role hierarchy for {guild.name}...")
             await organize_role_hierarchy_for_guild(guild)
-            print(f"🚫 Removing Slacker access from building channels for {guild.name}...")
-            await remove_slacker_access_from_building_channels_for_guild(guild)
-            print(f"🔑 Adding Slacker access to static channels for {guild.name}...")
-            await give_slacker_access_to_all_channels_for_guild(guild)
+            print(f"🚫 Removing Runner access from building channels for {guild.name}...")
+            await remove_runner_access_from_building_channels_for_guild(guild)
+            print(f"🔑 Adding Runner access to static channels for {guild.name}...")
+            await give_runner_access_to_all_channels_for_guild(guild)
 
             # Check if ezhang. is already in this server and give them the :( role
             await setup_ezhang_admin_role(guild)
@@ -2193,12 +2207,24 @@ async def on_guild_join(guild):
     try:
         print(f"🏗️ Setting up new guild: {guild.name}")
 
+        # Delete default Discord channels (general text and General voice)
+        print("🗑️ Removing default Discord channels...")
+        for channel in guild.channels:
+            if channel.name.lower() == "general":
+                try:
+                    await channel.delete(reason="Removing default Discord channel")
+                    print(f"🗑️ Deleted default channel: {channel.name}")
+                except discord.Forbidden:
+                    print(f"❌ No permission to delete channel {channel.name}")
+                except Exception as e:
+                    print(f"⚠️ Error deleting channel {channel.name}: {e}")
+
         # Set up the guild with all the standard setup
         await setup_static_channels_for_guild(guild)
         await move_bot_role_to_top_for_guild(guild)
         await organize_role_hierarchy_for_guild(guild)
-        await remove_slacker_access_from_building_channels_for_guild(guild)
-        await give_slacker_access_to_all_channels_for_guild(guild)
+        await remove_runner_access_from_building_channels_for_guild(guild)
+        await give_runner_access_to_all_channels_for_guild(guild)
         await setup_ezhang_admin_role(guild)
 
         print(f"✅ Successfully set up new guild: {guild.name}")
@@ -2344,7 +2370,7 @@ async def get_building_events(guild_id, building):
                 room = str(row.get("Room 1", "")).strip()
 
                 # Skip priority/custom roles (only include actual events)
-                priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Slacker", "VIPer"]
+                priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
                 if event and event not in priority_roles:
                     # Create a tuple of (event, room) to avoid duplicates
                     event_room_combo = (event, room if room else "")
@@ -2360,7 +2386,7 @@ async def get_building_events(guild_id, building):
 
 
 async def get_building_zone(guild_id, building):
-    """Get the zone number for a building from the Slacker Assignments sheet"""
+    """Get the zone number for a building from the Runner Assignments sheet"""
     if guild_id not in spreadsheets:
         print(f"❌ No spreadsheet connected for guild {guild_id}")
         return None
@@ -2368,9 +2394,9 @@ async def get_building_zone(guild_id, building):
     try:
         spreadsheet = spreadsheets[guild_id]
 
-        # Try to get the Slacker Assignments worksheet
+        # Try to get the Runner Assignments worksheet
         try:
-            sheet = spreadsheet.worksheet("Slacker Assignments")
+            sheet = spreadsheet.worksheet("Runner Assignments")
         except Exception:
             # If not found as a worksheet, search for a separate spreadsheet
             try:
@@ -2381,26 +2407,26 @@ async def get_building_zone(guild_id, building):
                 sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
                 parent_folders = sheet_metadata.get('parents', [])
                 if not parent_folders:
-                    print("❌ Could not determine parent folder for Slacker Assignments lookup")
+                    print("❌ Could not determine parent folder for Runner Assignments lookup")
                     return None
 
                 parent_folder_id = parent_folders[0]
 
-                # Search for Slacker Assignments spreadsheet
-                q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains 'Slacker Assignments'"
+                # Search for Runner Assignments spreadsheet
+                q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains 'Runner Assignments'"
                 results = drive_service.files().list(q=q, fields='files(id, name)').execute()
                 files = results.get('files', [])
 
                 if not files:
-                    print("❌ Could not find Slacker Assignments spreadsheet")
+                    print("❌ Could not find Runner Assignments spreadsheet")
                     return None
 
                 # Open the first matching spreadsheet
-                slacker_spreadsheet = gc.open_by_key(files[0]['id'])
-                sheet = slacker_spreadsheet.sheet1  # Use first worksheet
+                runner_spreadsheet = gc.open_by_key(files[0]['id'])
+                sheet = runner_spreadsheet.sheet1  # Use first worksheet
 
             except Exception as e:
-                print(f"❌ Error finding Slacker Assignments spreadsheet: {e}")
+                print(f"❌ Error finding Runner Assignments spreadsheet: {e}")
                 return None
 
         # Get all data from the sheet
@@ -2418,7 +2444,7 @@ async def get_building_zone(guild_id, building):
                         print(f"⚠️ Invalid zone value '{zone}' for building '{building}'")
                         return None
 
-        print(f"⚠️ Building '{building}' not found in Slacker Assignments")
+        print(f"⚠️ Building '{building}' not found in Runner Assignments")
         return None
 
     except Exception as e:
@@ -2426,8 +2452,8 @@ async def get_building_zone(guild_id, building):
         return None
 
 
-async def get_zone_slackers(guild_id, zone):
-    """Get all Discord IDs of slackers assigned to a specific zone"""
+async def get_zone_runners(guild_id, zone):
+    """Get all Discord IDs of runners assigned to a specific zone"""
     if guild_id not in spreadsheets:
         print(f"❌ No spreadsheet connected for guild {guild_id}")
         return []
@@ -2435,9 +2461,9 @@ async def get_zone_slackers(guild_id, zone):
     try:
         spreadsheet = spreadsheets[guild_id]
 
-        # Try to get the Slacker Assignments worksheet
+        # Try to get the Runner Assignments worksheet
         try:
-            sheet = spreadsheet.worksheet("Slacker Assignments")
+            sheet = spreadsheet.worksheet("Runner Assignments")
         except Exception:
             # If not found as a worksheet, search for a separate spreadsheet
             try:
@@ -2448,49 +2474,49 @@ async def get_zone_slackers(guild_id, zone):
                 sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
                 parent_folders = sheet_metadata.get('parents', [])
                 if not parent_folders:
-                    print("❌ Could not determine parent folder for zone slackers lookup")
+                    print("❌ Could not determine parent folder for zone runners lookup")
                     return []
 
                 parent_folder_id = parent_folders[0]
 
-                # Search for Slacker Assignments spreadsheet
-                q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains 'Slacker Assignments'"
+                # Search for Runner Assignments spreadsheet
+                q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains 'Runner Assignments'"
                 results = drive_service.files().list(q=q, fields='files(id, name)').execute()
                 files = results.get('files', [])
 
                 if not files:
-                    print("❌ Could not find Slacker Assignments spreadsheet")
+                    print("❌ Could not find Runner Assignments spreadsheet")
                     return []
 
                 # Open the first matching spreadsheet
-                slacker_spreadsheet = gc.open_by_key(files[0]['id'])
-                sheet = slacker_spreadsheet.sheet1  # Use first worksheet
+                runner_spreadsheet = gc.open_by_key(files[0]['id'])
+                sheet = runner_spreadsheet.sheet1  # Use first worksheet
 
             except Exception as e:
-                print(f"❌ Error finding Slacker Assignments spreadsheet: {e}")
+                print(f"❌ Error finding Runner Assignments spreadsheet: {e}")
                 return []
 
         # Get all data from the sheet
         data = sheet.get_all_records()
 
-        # Find all slackers in the specified zone
-        slacker_emails = []
+        # Find all runners in the specified zone
+        runner_emails = []
         for row in data:
-            row_zone = row.get("Slacker Zone", "")
+            row_zone = row.get("Runner Zone", "")
             if row_zone:
                 try:
                     if int(row_zone) == zone:
-                        # This slacker is in the target zone
+                        # This runner is in the target zone
                         email = str(row.get("Email", "")).strip()
                         if email:
-                            slacker_emails.append(email.lower())
+                            runner_emails.append(email.lower())
                 except (ValueError, TypeError):
                     continue
 
-        if not slacker_emails:
+        if not runner_emails:
             return []
 
-        print(f"🔍 Found {len(slacker_emails)} slacker emails in zone {zone}")
+        print(f"🔍 Found {len(runner_emails)} runner emails in zone {zone}")
 
         # Now cross-reference with the main sheet to get Discord IDs
         try:
@@ -2500,28 +2526,28 @@ async def get_zone_slackers(guild_id, zone):
             print(f"❌ Error accessing main sheet for Discord ID lookup: {e}")
             return []
 
-        zone_slackers = []
+        zone_runners = []
         for row in main_data:
             email = str(row.get("Email", "")).strip().lower()
-            if email in slacker_emails:
+            if email in runner_emails:
                 discord_id = str(row.get("Discord ID", "")).strip()
                 if discord_id:
                     try:
-                        zone_slackers.append(int(discord_id))
-                        print(f"✅ Found Discord ID {discord_id} for slacker email {email}")
+                        zone_runners.append(int(discord_id))
+                        print(f"✅ Found Discord ID {discord_id} for runner email {email}")
                     except ValueError:
-                        print(f"⚠️ Invalid Discord ID '{discord_id}' for slacker email {email}")
+                        print(f"⚠️ Invalid Discord ID '{discord_id}' for runner email {email}")
 
-        return zone_slackers
+        return zone_runners
 
     except Exception as e:
-        print(f"❌ Error looking up zone slackers: {e}")
+        print(f"❌ Error looking up zone runners: {e}")
         return []
 
 
 @bot.event
 async def on_thread_create(thread):
-    """Handle new help tickets - ping slackers in the user's zone"""
+    """Handle new help tickets - ping runners in the user's zone"""
     try:
         # Check if this is a thread in the help forum
         if (hasattr(thread, 'parent') and
@@ -2564,23 +2590,23 @@ async def on_thread_create(thread):
 
             print(f"🗺️ Building '{building}' is in zone {zone}")
 
-            # Get all slackers in this zone
-            zone_slackers = await get_zone_slackers(guild_id, zone)
-            if not zone_slackers:
-                print(f"⚠️ No slackers found for zone {zone}")
+            # Get all runners in this zone
+            zone_runners = await get_zone_runners(guild_id, zone)
+            if not zone_runners:
+                print(f"⚠️ No runners found for zone {zone}")
                 return
 
-            print(f"👥 Found {len(zone_slackers)} slackers in zone {zone}")
+            print(f"👥 Found {len(zone_runners)} runners in zone {zone}")
 
-            # Ping the slackers in the ticket
-            slacker_mentions = []
-            for slacker_id in zone_slackers:
-                member = thread.guild.get_member(slacker_id)
+            # Ping the runners in the ticket
+            runner_mentions = []
+            for runner_id in zone_runners:
+                member = thread.guild.get_member(runner_id)
                 if member:
-                    slacker_mentions.append(member.mention)
+                    runner_mentions.append(member.mention)
 
-            if slacker_mentions:
-                mention_text = " ".join(slacker_mentions)
+            if runner_mentions:
+                mention_text = " ".join(runner_mentions)
 
                 # Build location info
                 location_parts = [building]
@@ -2594,19 +2620,19 @@ async def on_thread_create(thread):
                     color=discord.Color.yellow()
                 )
                 embed.add_field(
-                    name="Slackers Assigned",
+                    name="Runners Assigned",
                     value=f"Please respond here if you can assist with this ticket!",
                     inline=False
                 )
 
                 # Send mentions as regular message content (not in embed) so Discord actually notifies users
                 await thread.send(content=mention_text, embed=embed)
-                print(f"✅ Pinged {len(slacker_mentions)} zone slackers in ticket")
+                print(f"✅ Pinged {len(runner_mentions)} zone runners in ticket")
 
                 # Track this ticket for re-pinging
                 active_help_tickets[thread.id] = {
                     "created_at": datetime.now(),
-                    "zone_slackers": zone_slackers,  # List of Discord IDs
+                    "zone_runners": zone_runners,  # List of Discord IDs
                     "has_response": False,
                     "ping_count": 1,  # First ping already sent
                     "zone": zone,
@@ -2618,7 +2644,7 @@ async def on_thread_create(thread):
                 print(f"🎯 Added ticket {thread.id} to tracking system")
 
             else:
-                print(f"⚠️ No valid Discord members found for zone {zone} slackers")
+                print(f"⚠️ No valid Discord members found for zone {zone} runners")
 
     except Exception as e:
         print(f"❌ Error handling help ticket creation: {e}")
@@ -2628,7 +2654,7 @@ async def on_thread_create(thread):
 
 @bot.event
 async def on_message(message):
-    """Detect when slackers respond to help tickets"""
+    """Detect when runners respond to help tickets"""
     try:
         # Skip bot messages
         if message.author.bot:
@@ -2638,30 +2664,30 @@ async def on_message(message):
         if message.channel.id in active_help_tickets:
             ticket_info = active_help_tickets[message.channel.id]
 
-            # Check if the message author is a slacker
-            is_slacker = False
+            # Check if the message author is a runner
+            is_runner = False
 
-            # Always check zone slackers
-            if message.author.id in ticket_info["zone_slackers"]:
-                is_slacker = True
+            # Always check zone runners
+            if message.author.id in ticket_info["zone_runners"]:
+                is_runner = True
 
             # If this ticket has reached final ping stage (ping_count >= 3),
-            # also accept responses from ANY slacker
+            # also accept responses from ANY runner
             elif ticket_info["ping_count"] >= 3:
                 guild_id = message.guild.id if message.guild else None
                 if guild_id:
-                    all_slacker_ids = await get_all_slackers(guild_id)
-                    if message.author.id in all_slacker_ids:
-                        is_slacker = True
+                    all_runner_ids = await get_all_runners(guild_id)
+                    if message.author.id in all_runner_ids:
+                        is_runner = True
 
-            if is_slacker:
+            if is_runner:
                 # Mark ticket as responded
                 ticket_info["has_response"] = True
-                print(f"✅ Slacker {message.author} responded to ticket {message.channel.id}")
+                print(f"✅ Runner {message.author} responded to ticket {message.channel.id}")
 
                 # Remove from tracking since someone responded
                 del active_help_tickets[message.channel.id]
-                print(f"🗑️ Removed ticket {message.channel.id} from tracking (slacker responded)")
+                print(f"🗑️ Removed ticket {message.channel.id} from tracking (runner responded)")
 
     except Exception as e:
         print(f"❌ Error handling message for ticket tracking: {e}")
@@ -2669,7 +2695,7 @@ async def on_message(message):
 
 @bot.event
 async def on_reaction_add(reaction, user):
-    """Detect when slackers react to help tickets"""
+    """Detect when runners react to help tickets"""
     try:
         # Skip bot reactions
         if user.bot:
@@ -2679,34 +2705,34 @@ async def on_reaction_add(reaction, user):
         if reaction.message.channel.id in active_help_tickets:
             ticket_info = active_help_tickets[reaction.message.channel.id]
 
-            # Check if the user is a slacker
-            is_slacker = False
+            # Check if the user is a runner
+            is_runner = False
 
-            # Always check zone slackers
-            if user.id in ticket_info["zone_slackers"]:
-                is_slacker = True
+            # Always check zone runners
+            if user.id in ticket_info["zone_runners"]:
+                is_runner = True
 
             # If this ticket has reached final ping stage (ping_count >= 3),
-            # also accept reactions from ANY slacker
+            # also accept reactions from ANY runner
             elif ticket_info["ping_count"] >= 3:
                 guild_id = reaction.message.guild.id if reaction.message.guild else None
                 if guild_id:
-                    all_slacker_ids = await get_all_slackers(guild_id)
-                    if user.id in all_slacker_ids:
-                        is_slacker = True
+                    all_runner_ids = await get_all_runners(guild_id)
+                    if user.id in all_runner_ids:
+                        is_runner = True
 
-            if is_slacker:
+            if is_runner:
                 # Only count specific helpful reactions
                 helpful_reactions = ['👍', '✅', '🆗', '👌', '✋', '🙋', '🙋‍♂️', '🙋‍♀️']
 
                 if str(reaction.emoji) in helpful_reactions:
                     # Mark ticket as responded
                     ticket_info["has_response"] = True
-                    print(f"✅ Slacker {user} reacted to ticket {reaction.message.channel.id} with {reaction.emoji}")
+                    print(f"✅ Runner {user} reacted to ticket {reaction.message.channel.id} with {reaction.emoji}")
 
                     # Remove from tracking since someone responded
                     del active_help_tickets[reaction.message.channel.id]
-                    print(f"🗑️ Removed ticket {reaction.message.channel.id} from tracking (slacker reacted)")
+                    print(f"🗑️ Removed ticket {reaction.message.channel.id} from tracking (runner reacted)")
 
     except Exception as e:
         print(f"❌ Error handling reaction for ticket tracking: {e}")
@@ -3613,13 +3639,13 @@ async def help_command(interaction: discord.Interaction):
 
     # # Data commands
     # embed.add_field(
-    #     name="🗺️ `/assignslackerzones` (Admin Only)",
-    #     value="Cluster rows in 'Slacker Assignments' by building and assign zone numbers (1..k) into the 'Zone Number' column using K-means on latitude/longitude.",
+    #     name="🗺️ `/assignrunnerzones` (Admin Only)",
+    #     value="Cluster rows in 'Runner Assignments' by building and assign zone numbers (1..k) into the 'Zone Number' column using K-means on latitude/longitude.",
     #     inline=False
     # )
     # embed.add_field(
     #     name="🐛 `/debugzone` (Admin Only)",
-    #     value="Debug zone assignment for a specific user. Shows their building, zone, and which slackers would be pinged for help tickets.",
+    #     value="Debug zone assignment for a specific user. Shows their building, zone, and which runners would be pinged for help tickets.",
     #     inline=False
     # )
     # embed.add_field(
@@ -3765,7 +3791,7 @@ async def organize_roles_command(interaction: discord.Interaction):
 
             embed.add_field(
                 name="📋 Priority Order (Bottom to Top)",
-                value="1. Other roles (alphabetical)\n2. **:(**\n3. **Chapter Roles** (green, alphabetical)\n4. **Volunteer**\n5. **Lead Event Supervisor**\n6. **Social Media**\n7. **Photographer**\n8. **Arbitrations**\n9. **Awards**\n10. **Slacker**\n11. **Bot Role** (highest)",
+                value="1. Other roles (alphabetical)\n2. **:(**\n3. **Chapter Roles** (green, alphabetical)\n4. **Volunteer**\n5. **Lead Event Supervisor**\n6. **Social Media**\n7. **Photographer**\n8. **Arbitrations**\n9. **Awards**\n10. **Runner**\n11. **Bot Role** (highest)",
                 inline=False
             )
 
@@ -4126,9 +4152,9 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
             print(f"❌ Could not send error message via followup: {followup_error}")
 
 
-@bot.tree.command(name="assignslackerzones", description="Assign zone numbers per building in 'Slacker Assignments' using K-means (Admin only)")
-async def assign_slacker_zones_command(interaction: discord.Interaction):
-    """Read 'Slacker Assignments' worksheet, cluster by building into K zones, write labels to 'Zone Number' column."""
+@bot.tree.command(name="assignrunnerzones", description="Assign zone numbers per building in 'Runner Assignments' using K-means (Admin only)")
+async def assign_runner_zones_command(interaction: discord.Interaction):
+    """Read 'Runner Assignments' worksheet, cluster by building into K zones, write labels to 'Zone Number' column."""
     # Admin only
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
@@ -4148,7 +4174,7 @@ async def assign_slacker_zones_command(interaction: discord.Interaction):
     spreadsheet = spreadsheets[guild_id]
 
     # Open the worksheet or find a separate spreadsheet in the same Drive folder
-    worksheet_name = "Slacker Assignments"
+    worksheet_name = "Runner Assignments"
     ws = None
     try:
         ws = spreadsheet.worksheet(worksheet_name)
@@ -4161,7 +4187,7 @@ async def assign_slacker_zones_command(interaction: discord.Interaction):
             sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
             parent_folders = sheet_metadata.get('parents', [])
             if not parent_folders:
-                await interaction.followup.send("❌ Could not determine parent folder to search for 'Slacker Assignments' sheet.", ephemeral=True)
+                await interaction.followup.send("❌ Could not determine parent folder to search for 'Runner Assignments' sheet.", ephemeral=True)
                 return
             parent_folder_id = parent_folders[0]
             # Search spreadsheets in same folder
@@ -4411,7 +4437,7 @@ async def check_help_tickets():
                     tickets_to_remove.append(thread_id)
                     continue
 
-                # Re-ping the slackers
+                # Re-ping the runners
                 await send_ticket_repings(thread, ticket_info)
 
                 # Update ping count and reset timer
@@ -4430,8 +4456,8 @@ async def check_help_tickets():
             print(f"🗑️ Removed invalid ticket {thread_id} from tracking")
 
 
-async def get_all_slackers(guild_id):
-    """Get Discord IDs of ALL slackers from the Slacker Assignments sheet"""
+async def get_all_runners(guild_id):
+    """Get Discord IDs of ALL runners from the Runner Assignments sheet"""
     if guild_id not in spreadsheets:
         print(f"❌ No spreadsheet connected for guild {guild_id}")
         return []
@@ -4439,9 +4465,9 @@ async def get_all_slackers(guild_id):
     try:
         spreadsheet = spreadsheets[guild_id]
 
-        # Try to get the Slacker Assignments worksheet
+        # Try to get the Runner Assignments worksheet
         try:
-            sheet = spreadsheet.worksheet("Slacker Assignments")
+            sheet = spreadsheet.worksheet("Runner Assignments")
         except Exception:
             # If not found as a worksheet, search for a separate spreadsheet
             try:
@@ -4452,45 +4478,45 @@ async def get_all_slackers(guild_id):
                 sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
                 parent_folders = sheet_metadata.get('parents', [])
                 if not parent_folders:
-                    print("❌ Could not determine parent folder for all slackers lookup")
+                    print("❌ Could not determine parent folder for all runners lookup")
                     return []
 
                 parent_folder_id = parent_folders[0]
 
-                # Search for Slacker Assignments spreadsheet
-                q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains 'Slacker Assignments'"
+                # Search for Runner Assignments spreadsheet
+                q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains 'Runner Assignments'"
                 results = drive_service.files().list(q=q, fields='files(id, name)').execute()
                 files = results.get('files', [])
 
                 if not files:
-                    print("❌ Could not find Slacker Assignments spreadsheet")
+                    print("❌ Could not find Runner Assignments spreadsheet")
                     return []
 
                 # Open the first matching spreadsheet
-                slacker_spreadsheet = gc.open_by_key(files[0]['id'])
-                sheet = slacker_spreadsheet.sheet1  # Use first worksheet
+                runner_spreadsheet = gc.open_by_key(files[0]['id'])
+                sheet = runner_spreadsheet.sheet1  # Use first worksheet
 
             except Exception as e:
-                print(f"❌ Error finding Slacker Assignments spreadsheet: {e}")
+                print(f"❌ Error finding Runner Assignments spreadsheet: {e}")
                 return []
 
         # Get all data from the sheet
         data = sheet.get_all_records()
 
-        # Find all slacker emails (anyone with a "Slacker Zone" value)
-        slacker_emails = []
+        # Find all runner emails (anyone with a "Runner Zone" value)
+        runner_emails = []
         for row in data:
-            slacker_zone = row.get("Slacker Zone", "")
-            if slacker_zone:  # Has a slacker zone assigned
+            runner_zone = row.get("Runner Zone", "")
+            if runner_zone:  # Has a runner zone assigned
                 email = str(row.get("Email", "")).strip()
                 if email:
-                    slacker_emails.append(email.lower())
+                    runner_emails.append(email.lower())
 
-        if not slacker_emails:
-            print("⚠️ No slacker emails found in Slacker Assignments")
+        if not runner_emails:
+            print("⚠️ No runner emails found in Runner Assignments")
             return []
 
-        print(f"🔍 Found {len(slacker_emails)} total slacker emails")
+        print(f"🔍 Found {len(runner_emails)} total runner emails")
 
         # Now cross-reference with the main sheet to get Discord IDs
         try:
@@ -4500,22 +4526,22 @@ async def get_all_slackers(guild_id):
             print(f"❌ Error accessing main sheet for Discord ID lookup: {e}")
             return []
 
-        all_slackers = []
+        all_runners = []
         for row in main_data:
             email = str(row.get("Email", "")).strip().lower()
-            if email in slacker_emails:
+            if email in runner_emails:
                 discord_id = str(row.get("Discord ID", "")).strip()
                 if discord_id:
                     try:
-                        all_slackers.append(int(discord_id))
+                        all_runners.append(int(discord_id))
                     except ValueError:
-                        print(f"⚠️ Invalid Discord ID '{discord_id}' for slacker email {email}")
+                        print(f"⚠️ Invalid Discord ID '{discord_id}' for runner email {email}")
 
-        print(f"✅ Found {len(all_slackers)} total slacker Discord IDs")
-        return all_slackers
+        print(f"✅ Found {len(all_runners)} total runner Discord IDs")
+        return all_runners
 
     except Exception as e:
-        print(f"❌ Error looking up all slackers: {e}")
+        print(f"❌ Error looking up all runners: {e}")
         return []
 
 
@@ -4524,29 +4550,29 @@ async def send_ticket_repings(thread, ticket_info):
     try:
         ping_count = ticket_info["ping_count"] + 1
 
-        # For final ping (3rd ping), get ALL slackers instead of just zone slackers
+        # For final ping (3rd ping), get ALL runners instead of just zone runners
         if ping_count >= 3:
-            print(f"🚨 Final ping for ticket {thread.id} - getting ALL slackers")
+            print(f"🚨 Final ping for ticket {thread.id} - getting ALL runners")
             guild_id = thread.guild.id
-            all_slacker_ids = await get_all_slackers(guild_id)
-            slacker_mentions = []
-            for slacker_id in all_slacker_ids:
-                member = thread.guild.get_member(slacker_id)
+            all_runner_ids = await get_all_runners(guild_id)
+            runner_mentions = []
+            for runner_id in all_runner_ids:
+                member = thread.guild.get_member(runner_id)
                 if member:
-                    slacker_mentions.append(member.mention)
+                    runner_mentions.append(member.mention)
         else:
-            # Regular ping - just zone slackers
-            slacker_mentions = []
-            for slacker_id in ticket_info["zone_slackers"]:
-                member = thread.guild.get_member(slacker_id)
+            # Regular ping - just zone runners
+            runner_mentions = []
+            for runner_id in ticket_info["zone_runners"]:
+                member = thread.guild.get_member(runner_id)
                 if member:
-                    slacker_mentions.append(member.mention)
+                    runner_mentions.append(member.mention)
 
-        if not slacker_mentions:
-            print(f"⚠️ No valid slackers found for re-ping in ticket {thread.id}")
+        if not runner_mentions:
+            print(f"⚠️ No valid runners found for re-ping in ticket {thread.id}")
             return
 
-        mention_text = " ".join(slacker_mentions)
+        mention_text = " ".join(runner_mentions)
 
         # Build location info
         location_parts = [ticket_info["building"]]
@@ -4562,7 +4588,7 @@ async def send_ticket_repings(thread, ticket_info):
                 color=discord.Color.orange()
             )
             embed.add_field(
-                name="Slackers Assigned",
+                name="Runners Assigned",
                 value=f"This ticket still needs assistance!",
                 inline=False
             )
@@ -4573,7 +4599,7 @@ async def send_ticket_repings(thread, ticket_info):
                 color=discord.Color.red()
             )
             embed.add_field(
-                name="ALL SLACKERS",
+                name="ALL RUNNERS",
                 value=f"This ticket still needs assistance!",
                 inline=False
             )
@@ -4626,8 +4652,8 @@ async def debug_zone_command(interaction: discord.Interaction, user: discord.Mem
             await interaction.followup.send(f"❌ No zone found for building '{building}'")
             return
 
-        # Get all slackers in this zone
-        zone_slackers = await get_zone_slackers(guild_id, zone)
+        # Get all runners in this zone
+        zone_runners = await get_zone_runners(guild_id, zone)
 
         # Create embed with debug info
         embed = discord.Embed(
@@ -4645,22 +4671,22 @@ async def debug_zone_command(interaction: discord.Interaction, user: discord.Mem
         embed.add_field(name="User Info", value=f"**Name:** {name}\n**Event:** {event}\n**Location:** {location}", inline=False)
         embed.add_field(name="Zone Assignment", value=f"**Zone:** {zone}", inline=False)
 
-        if zone_slackers:
-            slacker_mentions = []
-            for slacker_id in zone_slackers:
-                member = interaction.guild.get_member(slacker_id)
+        if zone_runners:
+            runner_mentions = []
+            for runner_id in zone_runners:
+                member = interaction.guild.get_member(runner_id)
                 if member:
-                    slacker_mentions.append(member.mention)
+                    runner_mentions.append(member.mention)
                 else:
-                    slacker_mentions.append(f"<@{slacker_id}> (not in server)")
+                    runner_mentions.append(f"<@{runner_id}> (not in server)")
 
             embed.add_field(
-                name=f"Zone {zone} Slackers ({len(zone_slackers)} total)",
-                value="\n".join(slacker_mentions) if slacker_mentions else "No valid slackers found",
+                name=f"Zone {zone} Runners ({len(zone_runners)} total)",
+                value="\n".join(runner_mentions) if runner_mentions else "No valid runners found",
                 inline=False
             )
         else:
-            embed.add_field(name="Zone Slackers", value="No slackers found for this zone", inline=False)
+            embed.add_field(name="Zone Runners", value="No runners found for this zone", inline=False)
 
         await interaction.followup.send(embed=embed)
 
