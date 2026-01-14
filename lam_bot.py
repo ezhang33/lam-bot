@@ -254,7 +254,7 @@ async def get_or_create_role(guild, role_name):
                         reason="Auto-created :( role for ezhang."
                     )
                     print(f"🆕 Created :( role with full permissions")
-                    await asyncio.sleep(0.1)  # Small delay to avoid rate limits
+                    await asyncio.sleep(0.5)  # Small delay to avoid rate limits
                     return role
                 except discord.HTTPException as e:
                     error_msg = str(e)
@@ -350,7 +350,7 @@ async def get_or_create_role(guild, role_name):
                 # to ensure the target channel exists when we try to post the message
 
                 # Small delay after creating role to avoid rate limits
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.5)
                 return role
             except discord.HTTPException as e:
                 error_msg = str(e)
@@ -1921,7 +1921,7 @@ async def organize_role_hierarchy_for_guild(guild):
                         moved_count += 1
                         success = True
                         # Small delay to avoid rate limits (Discord allows ~50 requests/second, but be conservative)
-                        await asyncio.sleep(0.1)  # 100ms delay between role moves
+                        await asyncio.sleep(0.5)  # 100ms delay between role moves
                     except discord.Forbidden:
                         print(f"❌ No permission to move role '{role.name}' (may be higher than bot)")
                         success = True  # Don't retry permission errors
