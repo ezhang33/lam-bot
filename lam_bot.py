@@ -5043,28 +5043,6 @@ async def role_reset_command(interaction: discord.Interaction):
         print(f"🔄 Syncing members for guild: {guild.name}")
         sync_results = await perform_member_sync(guild, data)
         print(f"✅ Sync complete for {guild.name}. Processed {sync_results['processed']} valid Discord IDs.")
-
-        result_embed.add_field(name="Nicknames Reset", value=str(nickname_count), inline=True)
-        result_embed.add_field(name="Roles Deleted", value=str(role_count), inline=True)
-        result_embed.set_footer(text="🏗️ Roles and nicknames have been refreshed!")
-
-        # Try to send to user via DM first
-        sent_dm = False
-        try:
-            await interaction.user.send(embed=result_embed)
-            print(f"✅ Sent completion message to {interaction.user} via DM")
-            sent_dm = True
-        except:
-            print(f"⚠️ Could not send completion message to {interaction.user} via DM")
-
-        # If DM failed and we created a welcome channel, send there
-        if not sent_dm and welcome_channel:
-            try:
-                await welcome_channel.send(f"{interaction.user.mention}", embed=result_embed)
-                print(f"✅ Sent completion message to #{welcome_channel.name}")
-            except Exception as e:
-                print(f"⚠️ Could not send completion message to welcome channel: {e}")
-
         print(f"📊 Summary:")
         print(f"   • {nickname_count} nicknames reset")
         print(f"   • {role_count} roles deleted")
@@ -5198,19 +5176,16 @@ async def reset_server_command(interaction: discord.Interaction):
                 except Exception as e:
                     print(f"⚠️ Error deleting role {role.name}: {e}")
 
-        # Create a welcome channel after everything is deleted
-        print("🏗️ Creating welcome channel...")
+        # Set up static channels after everything is deleted
+        print("🏗️ Setting up static channels...")
         welcome_channel = None
         try:
-            welcome_channel = await guild.create_text_channel(
-                "welcome",
-                reason=f"Created after server reset by {interaction.user}"
-            )
-            print(f"✅ Created welcome channel: #{welcome_channel.name}")
-        except discord.Forbidden:
-            print(f"❌ No permission to create welcome channel")
+            await setup_static_channels_for_guild(guild)
+            # Get the welcome channel that was just created
+            welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
+            print(f"✅ Static channels setup complete")
         except Exception as e:
-            print(f"⚠️ Error creating welcome channel: {e}")
+            print(f"⚠️ Error setting up static channels: {e}")
 
         # Send completion message
         print("🧨 SERVER RESET COMPLETE!")
