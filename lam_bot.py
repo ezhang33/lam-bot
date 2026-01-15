@@ -5245,11 +5245,13 @@ async def role_reset_command(interaction: discord.Interaction):
         new_roles = set(priority_roles + list(event_list) + list(chapters))
         common_roles = current_roles & new_roles
         delete_roles = common_roles ^ current_roles
+        add_roles = common_roles ^ new_roles
 
         print(f"🔄 DEBUG: current_roles = {current_roles}")
         print(f"🔄 DEBUG: new_roles = {new_roles}")
         print(f"🔄 DEBUG: common_roles = {common_roles}")
         print(f"🔄 DEBUG: delete_roles = {delete_roles}")
+        print(f"🔄 DEBUG: add_roles = {add_roles}")
 
         try:
             # Delete custom roles (keep @everyone and bot roles)
@@ -5276,6 +5278,11 @@ async def role_reset_command(interaction: discord.Interaction):
                 for building, first_event, room in building_structures:
                     print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
                     await setup_building_structure(guild, building, first_event, room)
+                    building_chat_name = f"{sanitize_for_discord(building)}-chat"
+                    category = await get_or_create_category(guild, category_name)
+                    building_chat = await get_or_create_channel(guild, building_chat_name, category, is_building_chat=True)
+                    event_role = await get_or_create_role(guild, first_event)
+                    await add_role_to_building_chat(building_chat, event_role)
                 # Create all chapter structures upfront
                 for chapter in chapters:
                     print(f"📖 Pre-creating chapter: {chapter}")
