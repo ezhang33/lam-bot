@@ -66,7 +66,7 @@ active_help_tickets = {}  # thread_id -> ticket_info
 CACHE_FILE = "bot_cache.json"
 
 # Bit to show if setup is done
-setup_done = 0
+setup_done = 1
 
 def save_cache(data):
     """Save cache data to JSON file"""
