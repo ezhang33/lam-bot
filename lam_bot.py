@@ -5137,16 +5137,6 @@ async def role_reset_command(interaction: discord.Interaction):
 
     # Defer immediately since this will take time
     await interaction.response.defer(ephemeral=True)
-
-    print(f"🔍 DEBUG: Testing sheet access by reading data...")
-    try:
-        test_data = sheets[guild_id].get_all_records()
-        print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
-    except Exception as e:
-        print(f"❌ DEBUG: Error reading sheet data: {e}")
-        print(f"❌ DEBUG: Error type: {type(e)}")
-        print(f"❌ DEBUG: Error details: {str(e)}")
-        raise e
     
     try:
         guild = interaction.guild
@@ -5182,6 +5172,16 @@ async def role_reset_command(interaction: discord.Interaction):
         print(f"❌ DEBUG: Error parsing sheet for build/rooms and chapter: {e}")
         raise e
         
+    print(f"🔍 DEBUG: Testing sheet access by reading data...")
+    try:
+        test_data = sheets[guild_id].get_all_records()
+        print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
+    except Exception as e:
+        print(f"❌ DEBUG: Error reading sheet data: {e}")
+        print(f"❌ DEBUG: Error type: {type(e)}")
+        print(f"❌ DEBUG: Error details: {str(e)}")
+        raise e
+    
     print(f"🔄 Starting role reset for {guild.name} requested by {interaction.user}")
 
     # Counters
