@@ -5279,7 +5279,7 @@ async def role_reset_command(interaction: discord.Interaction):
                     print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
                     await setup_building_structure(guild, building, first_event, room)
                     building_chat_name = f"{sanitize_for_discord(building)}-chat"
-                    category = await get_or_create_category(guild, category_name)
+                    category = await get_or_create_category(guild, building)
                     building_chat = await get_or_create_channel(guild, building_chat_name, category, is_building_chat=True)
                     event_role = await get_or_create_role(guild, first_event)
                     await add_role_to_building_chat(building_chat, event_role)
