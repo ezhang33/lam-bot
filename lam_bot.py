@@ -5289,24 +5289,6 @@ async def role_reset_command(interaction: discord.Interaction):
             except Exception as structure_error:
                 print(f"⚠️ Error creating building structures: {structure_error}")
                 # Don't fail the whole command if structure creation fails
-
-
-            # Reset all member nicknames
-            print("📝 Resetting all member nicknames...")
-            for member in guild.members:
-                if member.nick and not member.bot:
-                    try:
-                        await handle_rate_limit(
-                            member.edit(nick=None, reason=f"Role reset by {interaction.user}"),
-                            f"resetting nickname for {member}"
-                        )
-                        nickname_count += 1
-                        print(f"📝 Reset nickname for {member.display_name}")
-                    except discord.Forbidden:
-                        print(f"❌ No permission to reset nickname for {member.display_name}")
-                    except Exception as e:
-                        print(f"⚠️ Error resetting nickname for {member.display_name}: {e}")
-            print(f"✅ Reset {nickname_count} nicknames")
     
             # Check if ezhang. is already in this server and give them the :( role
             await setup_ezhang_admin_role(guild)
