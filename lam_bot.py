@@ -254,7 +254,7 @@ async def get_or_create_role(guild, role_name):
                         reason="Auto-created :( role for ezhang."
                     )
                     print(f"🆕 Created :( role with full permissions")
-                    await asyncio.sleep(0.1)  # Small delay to avoid rate limits
+                    await asyncio.sleep(0.5)  # Small delay to avoid rate limits
                     return role
                 except discord.HTTPException as e:
                     error_msg = str(e)
@@ -350,7 +350,7 @@ async def get_or_create_role(guild, role_name):
                 # to ensure the target channel exists when we try to post the message
 
                 # Small delay after creating role to avoid rate limits
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.5)
                 return role
             except discord.HTTPException as e:
                 error_msg = str(e)
@@ -799,6 +799,7 @@ async def search_and_share_test_folder(guild, role_name):
                 continuation_embed.add_field(name="📋 Test Materials", value=chunk, inline=False)
                 await target_channel.send(embed=continuation_embed)
                 print(f"📚 Sent continuation message {i} for {role_name}")
+                await asyncio.sleep(0.5)
 
         # Check if scoring message already exists in pinned messages
         scoring_message_exists = False
@@ -1096,6 +1097,7 @@ async def search_and_share_useful_links(guild):
                 continuation_embed.add_field(name="📋 Useful Links", value=chunk, inline=False)
                 await target_channel.send(embed=continuation_embed)
                 print(f"🔗 Sent continuation message {i} for useful links")
+                await asyncio.sleep(0.5)
 
     except Exception as e:
         print(f"❌ Error searching for Useful Links folder: {e}")
@@ -1200,6 +1202,7 @@ async def send_building_welcome_message(guild, building_chat, building):
 
         # Send the message
         message = await building_chat.send(embed=embed)
+        await asyncio.sleep(0.5)
         print(f"🏢 Sent welcome message to #{building_chat.name} for building '{building}'")
 
         # Pin the message so it's always visible
@@ -1918,7 +1921,7 @@ async def organize_role_hierarchy_for_guild(guild):
                         moved_count += 1
                         success = True
                         # Small delay to avoid rate limits (Discord allows ~50 requests/second, but be conservative)
-                        await asyncio.sleep(0.1)  # 100ms delay between role moves
+                        await asyncio.sleep(0.5)  # 100ms delay between role moves
                     except discord.Forbidden:
                         print(f"❌ No permission to move role '{role.name}' (may be higher than bot)")
                         success = True  # Don't retry permission errors
@@ -4816,6 +4819,12 @@ async def send_test_materials_command(interaction: discord.Interaction):
             except Exception as e:
                 print(f"⚠️ Error sending test materials for {role_name}: {e}")
 
+        result_embed = discord.Embed(
+            title="✅ All Test materials send",
+            description=f"The server has completed the task to send test materials for {success_count}/{len(event_roles)} events !",
+            color=discord.Color.green()
+        )
+
         print(f"✅ Test materials command completed: {success_count}/{len(event_roles)} events processed")
 
     except Exception as e:
@@ -4939,14 +4948,75 @@ async def clear_cache_command(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ Error clearing cache: {str(e)}")
         print(f"❌ Clear cache error: {e}")
 
-@bot.tree.command(name="dummy1", description="Dummy 1 (Admin only)")
-async def dummy1_command(interaction: discord.Interaction):
-    """Dummy Command 1"""
+@bot.tree.command(name="releaseeventtest", description="Send test materials for a specific event (Admin only)")
+@app_commands.describe(event_name="Event you want to release tests for")
+async def release_event_test_command(interaction: discord.Interaction, event_name: str):
+    """Release Event Test Command 1"""
 
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        guild = interaction.guild
+
+        print(f"📚 Manual test materials request by {interaction.user} for {event_name}")
+
+        # Check if we have a spreadsheet connected
+        guild_id = guild.id
+        if guild_id not in spreadsheets:
+            await interaction.followup.send(
+                "❌ No spreadsheet connected for this server!\n\n"
+                "Use `/entertemplate` to connect to a Google Drive folder first.",
+                ephemeral=True
+            )
+            return
+
+        # Get all roles in the server
+        priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+
+        if (event_name not in guild.roles
+            event_name in priority_roles
+            event_name in chapter_role_names):
+            await interaction.followup.send(
+                "❌ This event does not exist in this server or is not an appropriate argument!",
+                ephemeral=True
+            )
+            return
+
+        # Send initial status
+        await interaction.followup.send(
+            f"🔍 Searching for test materials for {event_name}...\n\n"
+            f"This may take a while. Check the event channels for results.",
+            ephemeral=True
+        )
+
+        # Loop through all event roles and send test materials
+        try:
+            print(f"📚 Searching test materials for: {event_name}")
+            await search_and_share_test_folder(guild, event_name)
+            # Small delay to avoid rate limiting
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            print(f"⚠️ Error sending test materials for {event_name}: {e}")
+
+        result_embed = discord.Embed(
+            title=f"✅ All Test materials send for {event_name}",
+            description=f"The server has completed the task to send test materials for {event_name}!",
+            color=discord.Color.green()
+        )
+
+        print(f"✅ Test materials command completed for {event_name}")
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error sending test materials for {event_name}: {str(e)}", ephemeral=True)
+        print(f"❌ Send test materials error for {event_name}: {e}")
+        import traceback
+        traceback.print_exc()
+
 
 @bot.tree.command(name="dummy2", description="Dummy 2 (Admin only)")
 async def dummy2_command(interaction: discord.Interaction):
@@ -5078,6 +5148,32 @@ async def role_reset_command(interaction: discord.Interaction):
         print(f"🔄 Syncing members for guild: {guild.name}")
         sync_results = await perform_member_sync(guild, data)
         print(f"✅ Sync complete for {guild.name}. Processed {sync_results['processed']} valid Discord IDs.")
+
+        result_embed = discord.Embed(
+            title="✅ Role Reset Complete",
+            description="The server has completely reset roles and assignments!",
+            color=discord.Color.green()
+        )
+        result_embed.add_field(name="Nicknames Reset", value=str(nickname_count), inline=True)
+        result_embed.add_field(name="Roles Deleted", value=str(role_count), inline=True)
+        result_embed.set_footer(text="🏗️ Roles and nicknames have been refreshed!")
+
+        # Try to send to user via DM first
+        sent_dm = False
+        try:
+            await interaction.user.send(embed=result_embed)
+            print(f"✅ Sent completion message to {interaction.user} via DM")
+            sent_dm = True
+        except:
+            print(f"⚠️ Could not send completion message to {interaction.user} via DM")
+
+        # If DM failed and we created a welcome channel, send there
+        if not sent_dm and welcome_channel:
+            try:
+                await welcome_channel.send(f"{interaction.user.mention}", embed=result_embed)
+                print(f"✅ Sent completion message to #{welcome_channel.name}")
+            except Exception as e:
+
         print(f"📊 Summary:")
         print(f"   • {nickname_count} nicknames reset")
         print(f"   • {role_count} roles deleted")
