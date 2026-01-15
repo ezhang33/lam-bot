@@ -5144,7 +5144,7 @@ async def role_reset_command(interaction: discord.Interaction):
 
         # Fetch all rows from this guild's sheet
         data = sheets[guild.id].get_all_records()
-
+        guild_id = guild.id
         ##############
         # Test access by getting sheet info
         print(f"🔍 DEBUG: Testing sheet access by reading data...")
@@ -5212,25 +5212,6 @@ async def role_reset_command(interaction: discord.Interaction):
         except Exception as sync_error:
             print(f"⚠️ Error during immediate sync: {sync_error}")
             # Don't fail the whole command if sync fails
-        # Create embed with sync results
-        embed = discord.Embed(
-            title="✅ Template Sheet Connected & Synced!",
-            description=f"Successfully connected to: **{found_sheet.title}**\n"
-                       f"📊 Worksheet: **{sheets[guild_id].title}**\n"
-                       f"📊 Found {len(test_data)} rows of data\n"
-                       f"🔗 Folder: [Click here]({folder_link})",
-            color=discord.Color.green()
-        )
-        # Add sync results if available
-        if sync_results:
-            embed.add_field(
-                name="🔄 Immediate Sync Results",
-                value=f"• **{sync_results['processed']}** Discord IDs processed\n"
-                      f"• **{sync_results['invited']}** new invites sent\n"
-                      f"• **{sync_results['role_assignments']}** roles assigned\n"
-                      f"• **{sync_results['nickname_updates']}** nicknames updated",
-                inline=False
-            )
             ############
 
         result_embed = discord.Embed(
