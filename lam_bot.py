@@ -1237,7 +1237,7 @@ async def add_role_to_building_chat(channel, role):
     """Add a role to a building chat channel permissions"""
     if not channel:
         print(f"❌ No channel : {channel} found")
-        return'
+        return
     if not role:
         print(f"❌ No role : {role} found")
         return
