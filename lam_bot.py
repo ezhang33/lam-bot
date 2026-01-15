@@ -3018,6 +3018,10 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
+        return
+    
     async with admin_lock:
         if "drive.google.com/drive/folders/" in folder_link:
             try:
@@ -3357,6 +3361,10 @@ async def sync_command(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
+        return
+    
     async with admin_lock:
 
         await interaction.response.defer(ephemeral=True)
@@ -3755,6 +3763,10 @@ async def organize_roles_command(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
+        return
+    
     async with admin_lock:
 
         await interaction.response.defer(ephemeral=True)
@@ -4197,6 +4209,10 @@ async def assign_runner_zones_command(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
+        return
+    
     async with admin_lock:
 
         await interaction.response.defer(ephemeral=True)
@@ -4802,6 +4818,10 @@ async def send_test_materials_command(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
+        return
+    
     async with admin_lock:
 
         await interaction.response.defer(ephemeral=True)
@@ -4956,6 +4976,10 @@ async def clear_cache_command(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
+        return
+        
     async with admin_lock:
 
         await interaction.response.defer(ephemeral=True)
@@ -5002,6 +5026,10 @@ async def release_event_test_command(interaction: discord.Interaction, event_nam
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
+        return
+    
     async with admin_lock:
 
         await interaction.response.defer(ephemeral=True)
@@ -5142,6 +5170,10 @@ async def role_reset_command(interaction: discord.Interaction):
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+    
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
     
     async with admin_lock:
@@ -5335,6 +5367,10 @@ async def reset_server_command(interaction: discord.Interaction):
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+    
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
     
     async with admin_lock:
