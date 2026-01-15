@@ -5147,104 +5147,91 @@ async def role_reset_command(interaction: discord.Interaction):
 
         ##############
         # Test access by getting sheet info
-            print(f"🔍 DEBUG: Testing sheet access by reading data...")
-            try:
-                test_data = sheets[guild_id].get_all_records()
-                print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
-            except Exception as e:
-                print(f"❌ DEBUG: Error reading sheet data: {e}")
-                print(f"❌ DEBUG: Error type: {type(e)}")
-                print(f"❌ DEBUG: Error details: {str(e)}")
-                raise e
-
-            # Pre-create all building structures and channels from the sheet data
-            print("🏗️ Pre-creating all building structures and channels...")
-            try:
-                guild = interaction.guild
-                if guild:
-                    # Extract all unique building/event combinations from the sheet
-                    building_structures = set()
-                    chapters = set()
-                    for row in test_data:
-                        building = str(row.get("Building 1", "")).strip()
-                        first_event = str(row.get("First Event", "")).strip()
-                        room = str(row.get("Room 1", "")).strip()
-                        chapter = str(row.get("Chapter", "")).strip()
-
-                        if building and first_event:
-                            # Use a tuple to track unique combinations
-                            building_structures.add((building, first_event, room))
-
-                        # Add chapters (including Unaffiliated for blank/N/A)
-                        if chapter and chapter.lower() not in ["n/a", "na", ""]:
-                            chapters.add(chapter)
-                        else:
-                            chapters.add("Unaffiliated")
-
-                    print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
-                    print(f"📖 Found {len(chapters)} unique chapters to create")
-
-                    # Create all building structures upfront
-                    for building, first_event, room in building_structures:
-                        print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
-                        await setup_building_structure(guild, building, first_event, room)
-
-                    # Create all chapter structures upfront
-                    for chapter in chapters:
-                        print(f"📖 Pre-creating chapter: {chapter}")
-                        await setup_chapter_structure(guild, chapter)
-
-                    # Sort chapter channels alphabetically
-                    print("📖 Organizing chapter channels alphabetically...")
-                    await sort_chapter_channels_alphabetically(guild)
-
-                    # Sort categories once after all structures are created
-                    print("📋 Organizing all building categories alphabetically...")
-                    await sort_building_categories_alphabetically(guild)
-
-                    print(f"✅ Pre-created {len(building_structures)} building structures")
-                else:
-                    print("⚠️ Could not get guild for structure creation")
-            except Exception as structure_error:
-                print(f"⚠️ Error creating building structures: {structure_error}")
-                # Don't fail the whole command if structure creation fails
-
-            # Trigger an immediate sync after successful connection and structure creation
-            print("🔄 Triggering immediate sync after template connection...")
-            sync_results = None
-            try:
-                guild = interaction.guild
-                if guild:
-                    sync_results = await perform_member_sync(guild, test_data)
-                    print(f"✅ Initial sync complete: {sync_results['processed']} processed, {sync_results['invited']} invited, {sync_results['role_assignments']} roles assigned")
-                else:
-                    print("⚠️ Could not get guild for immediate sync")
-            except Exception as sync_error:
-                print(f"⚠️ Error during immediate sync: {sync_error}")
-                # Don't fail the whole command if sync fails
-
-            # Create embed with sync results
-            embed = discord.Embed(
-                title="✅ Template Sheet Connected & Synced!",
-                description=f"Successfully connected to: **{found_sheet.title}**\n"
-                           f"📊 Worksheet: **{sheets[guild_id].title}**\n"
-                           f"📊 Found {len(test_data)} rows of data\n"
-                           f"🔗 Folder: [Click here]({folder_link})",
-                color=discord.Color.green()
+        print(f"🔍 DEBUG: Testing sheet access by reading data...")
+        try:
+            test_data = sheets[guild_id].get_all_records()
+            print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
+        except Exception as e:
+            print(f"❌ DEBUG: Error reading sheet data: {e}")
+            print(f"❌ DEBUG: Error type: {type(e)}")
+            print(f"❌ DEBUG: Error details: {str(e)}")
+            raise e
+        # Pre-create all building structures and channels from the sheet data
+        print("🏗️ Pre-creating all building structures and channels...")
+        try:
+            guild = interaction.guild
+            if guild:
+                # Extract all unique building/event combinations from the sheet
+                building_structures = set()
+                chapters = set()
+                for row in test_data:
+                    building = str(row.get("Building 1", "")).strip()
+                    first_event = str(row.get("First Event", "")).strip()
+                    room = str(row.get("Room 1", "")).strip()
+                    chapter = str(row.get("Chapter", "")).strip()
+                    if building and first_event:
+                        # Use a tuple to track unique combinations
+                        building_structures.add((building, first_event, room))
+                    # Add chapters (including Unaffiliated for blank/N/A)
+                    if chapter and chapter.lower() not in ["n/a", "na", ""]:
+                        chapters.add(chapter)
+                    else:
+                        chapters.add("Unaffiliated")
+                print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
+                print(f"📖 Found {len(chapters)} unique chapters to create")
+                # Create all building structures upfront
+                for building, first_event, room in building_structures:
+                    print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
+                    await setup_building_structure(guild, building, first_event, room)
+                # Create all chapter structures upfront
+                for chapter in chapters:
+                    print(f"📖 Pre-creating chapter: {chapter}")
+                    await setup_chapter_structure(guild, chapter)
+                # Sort chapter channels alphabetically
+                print("📖 Organizing chapter channels alphabetically...")
+                await sort_chapter_channels_alphabetically(guild)
+                # Sort categories once after all structures are created
+                print("📋 Organizing all building categories alphabetically...")
+                await sort_building_categories_alphabetically(guild)
+                print(f"✅ Pre-created {len(building_structures)} building structures")
+            else:
+                print("⚠️ Could not get guild for structure creation")
+        except Exception as structure_error:
+            print(f"⚠️ Error creating building structures: {structure_error}")
+            # Don't fail the whole command if structure creation fails
+        # Trigger an immediate sync after successful connection and structure creation
+        print("🔄 Triggering immediate sync after template connection...")
+        sync_results = None
+        try:
+            guild = interaction.guild
+            if guild:
+                sync_results = await perform_member_sync(guild, test_data)
+                print(f"✅ Initial sync complete: {sync_results['processed']} processed, {sync_results['invited']} invited, {sync_results['role_assignments']} roles assigned")
+            else:
+                print("⚠️ Could not get guild for immediate sync")
+        except Exception as sync_error:
+            print(f"⚠️ Error during immediate sync: {sync_error}")
+            # Don't fail the whole command if sync fails
+        # Create embed with sync results
+        embed = discord.Embed(
+            title="✅ Template Sheet Connected & Synced!",
+            description=f"Successfully connected to: **{found_sheet.title}**\n"
+                       f"📊 Worksheet: **{sheets[guild_id].title}**\n"
+                       f"📊 Found {len(test_data)} rows of data\n"
+                       f"🔗 Folder: [Click here]({folder_link})",
+            color=discord.Color.green()
+        )
+        # Add sync results if available
+        if sync_results:
+            embed.add_field(
+                name="🔄 Immediate Sync Results",
+                value=f"• **{sync_results['processed']}** Discord IDs processed\n"
+                      f"• **{sync_results['invited']}** new invites sent\n"
+                      f"• **{sync_results['role_assignments']}** roles assigned\n"
+                      f"• **{sync_results['nickname_updates']}** nicknames updated",
+                inline=False
             )
-
-            # Add sync results if available
-            if sync_results:
-                embed.add_field(
-                    name="🔄 Immediate Sync Results",
-                    value=f"• **{sync_results['processed']}** Discord IDs processed\n"
-                          f"• **{sync_results['invited']}** new invites sent\n"
-                          f"• **{sync_results['role_assignments']}** roles assigned\n"
-                          f"• **{sync_results['nickname_updates']}** nicknames updated",
-                    inline=False
-                )
-
-                ############
+            ############
 
         result_embed = discord.Embed(
             title="✅ Role Reset Complete",
