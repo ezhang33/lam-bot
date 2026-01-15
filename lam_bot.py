@@ -65,6 +65,9 @@ active_help_tickets = {}  # thread_id -> ticket_info
 # Cache configuration
 CACHE_FILE = "bot_cache.json"
 
+# Bit to show if setup is done
+setup_done = 0
+
 def save_cache(data):
     """Save cache data to JSON file"""
     try:
@@ -2994,7 +2997,8 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
 
     # Extract folder ID from the Google Drive link
     folder_id = None
-
+    setup_done = 0
+    
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
@@ -3326,6 +3330,9 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
         print(f"❌ DEBUG: Exception args: {e.args}")
         await interaction.followup.send(f"❌ Error processing folder: {str(e)}", ephemeral=True)
         return
+
+    setup_done = 1
+
 
 @bot.tree.command(name="sync", description="Manually trigger a member sync from the current Google Sheet (admin only)")
 async def sync_command(interaction: discord.Interaction):
@@ -3887,6 +3894,10 @@ async def reload_commands_command(interaction: discord.Interaction):
 async def login_command(interaction: discord.Interaction, email: str, password: str):
     """Login with email and password to get assigned roles"""
 
+    if setup_done == 0:
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configuraiotn is done!", ephemeral=True)
+        return
+    
     try:
         await interaction.response.defer(ephemeral=True)
 
@@ -5096,6 +5107,8 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
 async def role_reset_command(interaction: discord.Interaction):
     """Reset the roles and nicknames"""
 
+    setup_done = 0
+
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
@@ -5256,16 +5269,21 @@ async def role_reset_command(interaction: discord.Interaction):
         print(f"❌ Role reset error: {e}")
         import traceback
         traceback.print_exc()
+    
+    setup_done = 1
+
 
 @bot.tree.command(name="resetserver", description="⚠️ DANGER: Completely reset the server - deletes channels, roles, categories (Admin only)")
 async def reset_server_command(interaction: discord.Interaction):
     """⚠️ DANGER: Completely reset the server by deleting all channels, categories, roles, and nicknames"""
 
+    setup_done == 0
+
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
-
+    
     # Defer immediately since this will take time
     await interaction.response.defer(ephemeral=True)
 
@@ -5436,6 +5454,8 @@ async def reset_server_command(interaction: discord.Interaction):
         print(f"❌ Server reset error: {e}")
         import traceback
         traceback.print_exc()
+
+    setup_done == 1
 
 
 if __name__ == "__main__":
