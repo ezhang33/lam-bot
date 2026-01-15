@@ -5277,7 +5277,7 @@ async def role_reset_command(interaction: discord.Interaction):
 async def reset_server_command(interaction: discord.Interaction):
     """⚠️ DANGER: Completely reset the server by deleting all channels, categories, roles, and nicknames"""
 
-    setup_done == 0
+    setup_done = 0
 
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
@@ -5454,9 +5454,6 @@ async def reset_server_command(interaction: discord.Interaction):
         print(f"❌ Server reset error: {e}")
         import traceback
         traceback.print_exc()
-
-    setup_done == 1
-
 
 if __name__ == "__main__":
     # Start a simple HTTP health check server for Fly.io
