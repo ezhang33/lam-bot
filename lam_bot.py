@@ -5144,6 +5144,16 @@ async def role_reset_command(interaction: discord.Interaction):
         # Fetch all rows from this guild's sheet
         guild_id = guild.id
 
+        print(f"🔍 DEBUG: Testing sheet access by reading data...")
+        try:
+            test_data = sheets[guild_id].get_all_records()
+            print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
+        except Exception as e:
+            print(f"❌ DEBUG: Error reading sheet data: {e}")
+            print(f"❌ DEBUG: Error type: {type(e)}")
+            print(f"❌ DEBUG: Error details: {str(e)}")
+            raise e
+    
         # parsing the sheet to get all the building and chapter roles
         if guild:
             # Extract all unique building/event combinations from the sheet
@@ -5171,16 +5181,6 @@ async def role_reset_command(interaction: discord.Interaction):
         
     except Exception as e:
         print(f"❌ DEBUG: Error parsing sheet for build/rooms and chapter: {e}")
-        raise e
-        
-    print(f"🔍 DEBUG: Testing sheet access by reading data...")
-    try:
-        test_data = sheets[guild_id].get_all_records()
-        print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
-    except Exception as e:
-        print(f"❌ DEBUG: Error reading sheet data: {e}")
-        print(f"❌ DEBUG: Error type: {type(e)}")
-        print(f"❌ DEBUG: Error details: {str(e)}")
         raise e
     
     print(f"🔄 Starting role reset for {guild.name} requested by {interaction.user}")
