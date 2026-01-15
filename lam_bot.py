@@ -68,6 +68,14 @@ CACHE_FILE = "bot_cache.json"
 # Bit to show if setup is done
 setup_done = 1
 
+rate_limit_lock = asyncio.Lock()
+
+async def safe_call(coro):
+    async with rate_limit_lock:
+        result = await coro
+        await asyncio.sleep(0.25)
+        return result
+    
 def save_cache(data):
     """Save cache data to JSON file"""
     try:
@@ -713,7 +721,7 @@ async def search_and_share_test_folder(guild, role_name):
             return
 
         # Check if test materials message already exists in pinned messages
-        pinned_messages = await target_channel.pins()
+        pinned_messages = await safe_call(target_channel.pins())
         test_materials_exists = False
 
         for message in pinned_messages:
@@ -780,11 +788,12 @@ async def search_and_share_test_folder(guild, role_name):
         # Send the first message with the main embed
         embed.add_field(name="📋 Test Materials", value=chunks[0] if chunks else "No files found", inline=False)
         message = await target_channel.send(embed=embed)
+        await asyncio.sleep(0.2)
         print(f"📚 Shared test materials for {role_name} in #{target_channel.name}")
 
         # Pin the first message
         try:
-            await message.pin()
+            await safe_call(message.pin())
             print(f"📌 Pinned test materials message in #{target_channel.name}")
         except discord.Forbidden:
             print(f"⚠️ No permission to pin message in #{target_channel.name}")
@@ -844,7 +853,7 @@ async def search_and_share_test_folder(guild, role_name):
 
             # Pin the scoring message
             try:
-                await scoring_message.pin()
+                await safe_call(scoring_message.pin())
                 print(f"📌 Pinned scoring instructions message in #{target_channel.name}")
             except discord.Forbidden:
                 print(f"⚠️ No permission to pin scoring message in #{target_channel.name}")
@@ -1011,7 +1020,7 @@ async def search_and_share_useful_links(guild):
         print(f"✅ DEBUG: Found target channel: #{target_channel.name}")
 
         # Check if useful links message already exists in pinned messages
-        pinned_messages = await target_channel.pins()
+        pinned_messages = await safe_call(target_channel.pins())
         useful_links_exists = False
 
         for message in pinned_messages:
@@ -1082,7 +1091,7 @@ async def search_and_share_useful_links(guild):
 
         # Pin the first message
         try:
-            await message.pin()
+            await safe_call(message.pin())
             print(f"📌 Pinned useful links message in #{target_channel.name}")
         except discord.Forbidden:
             print(f"⚠️ No permission to pin message in #{target_channel.name}")
@@ -1210,7 +1219,7 @@ async def send_building_welcome_message(guild, building_chat, building):
 
         # Pin the message so it's always visible
         try:
-            await message.pin()
+            await safe_call(message.pin())
             print(f"📌 Pinned welcome message in #{building_chat.name}")
         except discord.Forbidden:
             print(f"⚠️ Could not pin welcome message in #{building_chat.name} (missing permissions)")
@@ -1289,7 +1298,7 @@ async def reset_server_for_guild(guild):
     channel_count = 0
     for channel in guild.text_channels:
         try:
-            await channel.delete(reason="Server reset")
+            await safe_call(channel.delete(reason="Server reset"))
             channel_count += 1
             print(f"🗑️ Deleted text channel: #{channel.name}")
         except discord.Forbidden:
@@ -1302,7 +1311,7 @@ async def reset_server_for_guild(guild):
     voice_count = 0
     for channel in guild.voice_channels:
         try:
-            await channel.delete(reason="Server reset")
+            await safe_call(channel.delete(reason="Server reset"))
             voice_count += 1
             print(f"🗑️ Deleted voice channel: {channel.name}")
         except discord.Forbidden:
@@ -1316,7 +1325,7 @@ async def reset_server_for_guild(guild):
     for channel in guild.channels:
         if hasattr(channel, 'type') and channel.type == discord.ChannelType.forum:
             try:
-                await channel.delete(reason="Server reset")
+                await safe_call(channel.delete(reason="Server reset"))
                 forum_count += 1
                 print(f"🗑️ Deleted forum channel: #{channel.name}")
             except discord.Forbidden:
@@ -1329,7 +1338,7 @@ async def reset_server_for_guild(guild):
     category_count = 0
     for category in guild.categories:
         try:
-            await category.delete(reason="Server reset")
+            await safe_call(category.delete(reason="Server reset"))
             category_count += 1
             print(f"🗑️ Deleted category: {category.name}")
         except discord.Forbidden:
@@ -1346,7 +1355,7 @@ async def reset_server_for_guild(guild):
             not role.managed and
             role < guild.me.top_role):
             try:
-                await role.delete(reason="Server reset")
+                await safe_call(role.delete(reason="Server reset"))
                 role_count += 1
                 print(f"🗑️ Deleted role: {role.name}")
             except discord.Forbidden:
@@ -1911,15 +1920,23 @@ async def organize_role_hierarchy_for_guild(guild):
         moved_count = 0
         rate_limited_roles = []
 
+        #role_positions = {}
+        #for role in final_order:
+        #    role_positions[role] = position
+        #    position += 1
+        #await safe_call(guild.edit_role_positions(role_positions, reason="Organizing role hierarchy"))
+        #print(f"✅ Successfully moved all roles!")
+
+
         for role in final_order:
             if role.position != position:
                 max_retries = 3
                 retry_count = 0
                 success = False
-
+        
                 while retry_count < max_retries and not success:
                     try:
-                        await role.edit(position=position, reason="Organizing role hierarchy")
+                        await safe_call(role.edit(position=position, reason="Organizing role hierarchy"))
                         print(f"📋 Moved '{role.name}' to position {position}")
                         moved_count += 1
                         success = True
@@ -1940,7 +1957,7 @@ async def organize_role_hierarchy_for_guild(guild):
                                     retry_after = float(e.retry_after)
                                 elif isinstance(e.response, dict) and 'retry_after' in e.response:
                                     retry_after = float(e.response['retry_after'])
-
+        
                                 print(f"⚠️ Rate limited moving role '{role.name}', waiting {retry_after}s before retry {retry_count}/{max_retries}...")
                                 await asyncio.sleep(retry_after)
                             else:
@@ -1968,11 +1985,11 @@ async def organize_role_hierarchy_for_guild(guild):
                             print(f"⚠️ Unexpected error moving role '{role.name}': {e}")
                             success = True
             position += 1
-
+        
         if rate_limited_roles:
             print(f"⚠️ Could not move {len(rate_limited_roles)} roles due to rate limits: {', '.join(rate_limited_roles)}")
             print("💡 These roles will be organized on the next sync or when you run /organizeroles again")
-
+        
         if moved_count > 0:
             print(f"✅ Successfully moved {moved_count} roles!")
             print(f"📋 Organized order (bottom to top): {' → '.join([r.name for r in final_order])}")
@@ -2214,7 +2231,7 @@ async def on_guild_join(guild):
         for channel in guild.channels:
             if channel.name.lower() == "general":
                 try:
-                    await channel.delete(reason="Removing default Discord channel")
+                    await safe_call(channel.delete(reason="Removing default Discord channel"))
                     print(f"🗑️ Deleted default channel: {channel.name}")
                 except discord.Forbidden:
                     print(f"❌ No permission to delete channel {channel.name}")
@@ -5150,7 +5167,7 @@ async def role_reset_command(interaction: discord.Interaction):
                 not role.managed and
                 role < guild.me.top_role):
                 try:
-                    await role.delete(reason=f"Role reset by {interaction.user}")
+                    await safe_call(role.delete(reason=f"Role reset by {interaction.user}"))
                     role_count += 1
                     print(f"🗑️ Deleted role: {role.name}")
                 except discord.Forbidden:
@@ -5329,7 +5346,7 @@ async def reset_server_command(interaction: discord.Interaction):
         print("🗑️ Deleting all text channels...")
         for channel in guild.text_channels:
             try:
-                await channel.delete(reason=f"Server reset by {interaction.user}")
+                await safe_call(channel.delete(reason=f"Server reset by {interaction.user}"))
                 channel_count += 1
                 print(f"🗑️ Deleted text channel: #{channel.name}")
             except discord.Forbidden:
@@ -5341,7 +5358,7 @@ async def reset_server_command(interaction: discord.Interaction):
         print("🗑️ Deleting all voice channels...")
         for channel in guild.voice_channels:
             try:
-                await channel.delete(reason=f"Server reset by {interaction.user}")
+                await safe_call(channel.delete(reason=f"Server reset by {interaction.user}"))
                 voice_count += 1
                 print(f"🗑️ Deleted voice channel: {channel.name}")
             except discord.Forbidden:
@@ -5354,7 +5371,7 @@ async def reset_server_command(interaction: discord.Interaction):
         for channel in guild.channels:
             if hasattr(channel, 'type') and channel.type == discord.ChannelType.forum:
                 try:
-                    await channel.delete(reason=f"Server reset by {interaction.user}")
+                    await safe_call(channel.delete(reason=f"Server reset by {interaction.user}"))
                     forum_count += 1
                     print(f"🗑️ Deleted forum channel: #{channel.name}")
                 except discord.Forbidden:
@@ -5366,7 +5383,7 @@ async def reset_server_command(interaction: discord.Interaction):
         print("🗑️ Deleting all categories...")
         for category in guild.categories:
             try:
-                await category.delete(reason=f"Server reset by {interaction.user}")
+                await safe_call(category.delete(reason=f"Server reset by {interaction.user}"))
                 category_count += 1
                 print(f"🗑️ Deleted category: {category.name}")
             except discord.Forbidden:
@@ -5382,7 +5399,7 @@ async def reset_server_command(interaction: discord.Interaction):
                 not role.managed and
                 role < guild.me.top_role):
                 try:
-                    await role.delete(reason=f"Server reset by {interaction.user}")
+                    await safe_call(role.delete(reason=f"Server reset by {interaction.user}"))
                     role_count += 1
                     print(f"🗑️ Deleted role: {role.name}")
                 except discord.Forbidden:
