@@ -345,6 +345,7 @@ async def get_or_create_role(guild, role_name):
         max_retries = 3
         retry_count = 0
         while retry_count < max_retries:
+            print(f"🧻 Trying to create role '{role_name}' attempt: {retry_count}")
             try:
                 role = await guild.create_role(
                     name=role_name,
@@ -383,7 +384,7 @@ async def get_or_create_role(guild, role_name):
                 if "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
                     retry_count += 1
                     if retry_count < max_retries:
-                        print(f"⚠️ Rate limited creating role '{role_name}', waiting 1s before retry {retry_count}/{max_retries}...")
+                        print(f"Rate limited creating role '{role_name}', waiting 1s before retry {retry_count}/{max_retries}...")
                         await asyncio.sleep(1.0)
                     else:
                         print(f"❌ Rate limited creating role '{role_name}' after {max_retries} retries, giving up")
