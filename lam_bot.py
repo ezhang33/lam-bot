@@ -799,7 +799,7 @@ async def search_and_share_test_folder(guild, role_name):
                 continuation_embed.add_field(name="📋 Test Materials", value=chunk, inline=False)
                 await target_channel.send(embed=continuation_embed)
                 print(f"📚 Sent continuation message {i} for {role_name}")
-                #await asyncio.sleep(0.5)
+                await asyncio.sleep(0.5)
 
         # Check if scoring message already exists in pinned messages
         scoring_message_exists = False
@@ -1097,7 +1097,7 @@ async def search_and_share_useful_links(guild):
                 continuation_embed.add_field(name="📋 Useful Links", value=chunk, inline=False)
                 await target_channel.send(embed=continuation_embed)
                 print(f"🔗 Sent continuation message {i} for useful links")
-                #await asyncio.sleep(0.5)
+                await asyncio.sleep(0.5)
 
     except Exception as e:
         print(f"❌ Error searching for Useful Links folder: {e}")
@@ -1202,7 +1202,7 @@ async def send_building_welcome_message(guild, building_chat, building):
 
         # Send the message
         message = await building_chat.send(embed=embed)
-        #await asyncio.sleep(0.5)
+        await asyncio.sleep(0.5)
         print(f"🏢 Sent welcome message to #{building_chat.name} for building '{building}'")
 
         # Pin the message so it's always visible
@@ -4819,11 +4819,11 @@ async def send_test_materials_command(interaction: discord.Interaction):
             except Exception as e:
                 print(f"⚠️ Error sending test materials for {role_name}: {e}")
 
-        #result_embed = discord.Embed(
-        #    title="✅ All Test materials send",
-        #    description=f"The server has completed the task to send test materials for {success_count}/{len(event_roles)} events !",
-        #    color=discord.Color.green()
-        #)
+        result_embed = discord.Embed(
+            title="✅ All Test materials send",
+            description=f"The server has completed the task to send test materials for {success_count}/{len(event_roles)} events !",
+            color=discord.Color.green()
+        )
 
         print(f"✅ Test materials command completed: {success_count}/{len(event_roles)} events processed")
 
@@ -4978,8 +4978,8 @@ async def release_event_test_command(interaction: discord.Interaction, event_nam
         # Get all roles in the server
         priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
 
-        if (event_name not in guild.roles
-            event_name in priority_roles
+        if (event_name not in guild.roles and
+            event_name in priority_roles and
             event_name in chapter_role_names):
             await interaction.followup.send(
                 "❌ This event does not exist in this server or is not an appropriate argument!",
@@ -5149,30 +5149,23 @@ async def role_reset_command(interaction: discord.Interaction):
         sync_results = await perform_member_sync(guild, data)
         print(f"✅ Sync complete for {guild.name}. Processed {sync_results['processed']} valid Discord IDs.")
 
-        #result_embed = discord.Embed(
-        #    title="✅ Role Reset Complete",
-        #    description="The server has completely reset roles and assignments!",
-        #    color=discord.Color.green()
-        #)
-        #result_embed.add_field(name="Nicknames Reset", value=str(nickname_count), inline=True)
-        #result_embed.add_field(name="Roles Deleted", value=str(role_count), inline=True)
-        #result_embed.set_footer(text="🏗️ Roles and nicknames have been refreshed!")
-#
-        ## Try to send to user via DM first
-        #sent_dm = False
-        #try:
-        #    await interaction.user.send(embed=result_embed)
-        #    print(f"✅ Sent completion message to {interaction.user} via DM")
-        #    sent_dm = True
-        #except:
-        #    print(f"⚠️ Could not send completion message to {interaction.user} via DM")
-#
-        ## If DM failed and we created a welcome channel, send there
-        #if not sent_dm and welcome_channel:
-        #    try:
-        #        await welcome_channel.send(f"{interaction.user.mention}", embed=result_embed)
-        #        print(f"✅ Sent completion message to #{welcome_channel.name}")
-        #    except Exception as e:
+        result_embed = discord.Embed(
+            title="✅ Role Reset Complete",
+            description="The server has completely reset roles and assignments!",
+            color=discord.Color.green()
+        )
+        result_embed.add_field(name="Nicknames Reset", value=str(nickname_count), inline=True)
+        result_embed.add_field(name="Roles Deleted", value=str(role_count), inline=True)
+        result_embed.set_footer(text="🏗️ Roles and nicknames have been refreshed!")
+
+        # Try to send to user via DM first
+        sent_dm = False
+        try:
+            await interaction.user.send(embed=result_embed)
+            print(f"✅ Sent completion message to {interaction.user} via DM")
+            sent_dm = True
+        except:
+            print(f"⚠️ Could not send completion message to {interaction.user} via DM")
 
         print(f"📊 Summary:")
         print(f"   • {nickname_count} nicknames reset")
