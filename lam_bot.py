@@ -243,6 +243,7 @@ async def get_or_create_role(guild, role_name):
     """Get a role by name, or create it if it doesn't exist"""
     role = discord.utils.get(guild.roles, name=role_name)
     if role:
+        print(f"🧻 Found '{role_name}' so no longer attempting to create it")
         return role
 
     # Check if auto-creation is enabled
