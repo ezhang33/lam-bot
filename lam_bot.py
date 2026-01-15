@@ -5555,7 +5555,7 @@ async def reset_server_command(interaction: discord.Interaction):
             import traceback
             traceback.print_exc()
 
-@bot.tree.check
+@bot.tree.interaction_check
 async def block_commands_during_reset(interaction: discord.Interaction) -> bool:
     global reset_active
 
