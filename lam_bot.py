@@ -1235,7 +1235,11 @@ async def send_building_welcome_message(guild, building_chat, building):
 
 async def add_role_to_building_chat(channel, role):
     """Add a role to a building chat channel permissions"""
-    if not channel or not role:
+    if not channel:
+        print(f"❌ No channel : {channel} found")
+        return'
+    if not role:
+        print(f"❌ No role : {role} found")
         return
 
     try:
@@ -5244,8 +5248,8 @@ async def role_reset_command(interaction: discord.Interaction):
             role_id[role.name] = role.id
         new_roles = set(priority_roles + list(event_list) + list(chapters))
         common_roles = current_roles & new_roles
-        delete_roles = common_roles ^ current_roles
-        add_roles = common_roles ^ new_roles
+        delete_roles = (common_roles ^ current_roles) - set(priority_roles)
+        add_roles = (common_roles ^ new_roles) - set(priority_roles)
 
         print(f"🔄 DEBUG: current_roles = {current_roles}")
         print(f"🔄 DEBUG: new_roles = {new_roles}")
