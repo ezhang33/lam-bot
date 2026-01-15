@@ -5158,6 +5158,7 @@ async def role_reset_command(interaction: discord.Interaction):
         if guild:
             # Extract all unique building/event combinations from the sheet
             building_structures = set()
+            event_building_combos = set()
             chapters = set()
             for row in test_data:
                 building = str(row.get("Building 1", "")).strip()
@@ -5166,9 +5167,10 @@ async def role_reset_command(interaction: discord.Interaction):
                 chapter = str(row.get("Chapter", "")).strip()
                 if building and first_event:
                     # Use a tuple to track unique combinations
-                    building_structures.add(building)
-                    building_structures.add(first_event)
-                    building_structures.add(room)
+                    event_building_combos.add(building)
+                    event_building_combos.add(first_event)
+                    event_building_combos.add(room)
+                    building_structures.add((building, first_event, room))
                 # Add chapters (including Unaffiliated for blank/N/A)
                 if chapter and chapter.lower() not in ["n/a", "na", ""]:
                     chapters.add(chapter)
@@ -5193,7 +5195,7 @@ async def role_reset_command(interaction: discord.Interaction):
     current_roles = {role.name for role in guild.roles}
     for role in guild.roles:
         role_id[role.name] = role.id
-    new_roles = set(priority_roles + list(building_structures) + list(chapters))
+    new_roles = set(priority_roles + list(event_building_combos) + list(chapters))
     common_roles = current_roles & new_roles
     delete_roles = common_roles ^ current_roles
 
