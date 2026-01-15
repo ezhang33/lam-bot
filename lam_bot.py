@@ -68,7 +68,9 @@ CACHE_FILE = "bot_cache.json"
 # Bit to show if setup is done
 admin_lock = asyncio.Lock()
 rate_limit_lock = asyncio.Lock()
+reset_active = False
 
+ALLOWED_DURING_RESET = {"entertemplate"}
 
 async def safe_call(coro):
     async with rate_limit_lock:
@@ -2227,12 +2229,12 @@ async def on_ready():
 async def on_guild_join(guild):
     """Handle setup when bot joins a new guild"""
     async with admin_lock:
-            
+
         print(f"🎉 Bot joined new guild: {guild.name} (ID: {guild.id}) - {guild.member_count} members")
-    
+
         try:
             print(f"🏗️ Setting up new guild: {guild.name}")
-    
+
             # Delete default Discord channels (general text and General voice)
             print("🗑️ Removing default Discord channels...")
             for channel in guild.channels:
@@ -2244,7 +2246,7 @@ async def on_guild_join(guild):
                         print(f"❌ No permission to delete channel {channel.name}")
                     except Exception as e:
                         print(f"⚠️ Error deleting channel {channel.name}: {e}")
-    
+
             # Set up the guild with all the standard setup
             await setup_static_channels_for_guild(guild)
             await move_bot_role_to_top_for_guild(guild)
@@ -2252,9 +2254,9 @@ async def on_guild_join(guild):
             await remove_runner_access_from_building_channels_for_guild(guild)
             await give_runner_access_to_all_channels_for_guild(guild)
             await setup_ezhang_admin_role(guild)
-    
+
             print(f"✅ Successfully set up new guild: {guild.name}")
-    
+
         except Exception as e:
             print(f"❌ Error setting up new guild {guild.name}: {e}")
 
@@ -5368,6 +5370,8 @@ async def role_reset_command(interaction: discord.Interaction):
 async def reset_server_command(interaction: discord.Interaction):
     """⚠️ DANGER: Completely reset the server by deleting all channels, categories, roles, and nicknames"""
 
+    global reset_active
+
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
@@ -5378,7 +5382,8 @@ async def reset_server_command(interaction: discord.Interaction):
         return
     
     async with admin_lock:
-        
+        reset_active = True
+
         # Defer immediately since this will take time
         await interaction.response.defer(ephemeral=True)
 
@@ -5549,6 +5554,24 @@ async def reset_server_command(interaction: discord.Interaction):
             print(f"❌ Server reset error: {e}")
             import traceback
             traceback.print_exc()
+
+@bot.tree.check
+async def block_commands_during_reset(interaction: discord.Interaction) -> bool:
+    global reset_active
+
+    if not reset_active:
+        return True
+
+    # Allow only entertemplate during reset
+    if interaction.command and interaction.command.name in ALLOWED_DURING_RESET:
+        return True
+
+    await interaction.response.send_message(
+        "🚧 Server reset in progress or done.\n"
+        "Only `/entertemplate` is available right now.",
+        ephemeral=True
+    )
+    return False
 
 if __name__ == "__main__":
     # Start a simple HTTP health check server for Fly.io
