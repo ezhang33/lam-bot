@@ -305,7 +305,7 @@ async def get_or_create_role(guild, role_name):
             "Runner": discord.Color.orange(),
             "Awards": discord.Color.yellow(),
             "Volunteer": discord.Color.blue(),
-            "Lead Event Supervisor": discord.Color.yellow(),
+            "Lead ES": discord.Color.yellow(),
             "Photographer": discord.Color.red(),
             "Arbitrations": discord.Color.green(),
             "Social Media": discord.Color.magenta(),
@@ -566,7 +566,7 @@ async def setup_building_structure(guild, building, first_event, room=None):
     print(f"🏗️ DEBUG: Setting up building structure - Building: '{building}', Event: '{first_event}', Room: '{room}'")
 
     # Skip creating building chat for priority/custom roles (only create for actual event roles)
-    priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+    priority_roles = [":(", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
     if first_event and first_event in priority_roles:
         print(f"⏭️ Skipping building structure creation for priority role '{first_event}' in {building} (only event roles get building structures)")
         return
@@ -1832,7 +1832,7 @@ async def move_bot_role_to_top_for_guild(guild):
         print(f"❌ Error moving bot role to top: {e}")
 
 async def organize_role_hierarchy_for_guild(guild):
-    """Organize roles in priority order: lambot, Runner, Arbitrations, Photographer, Social Media, Lead Event Supervisor, Volunteer, :(, then others"""
+    """Organize roles in priority order: lambot, Runner, Arbitrations, Photographer, Social Media, Lead ES, Volunteer, :(, then others"""
     if not guild:
         print("❌ Guild not provided!")
         return
@@ -1848,7 +1848,7 @@ async def organize_role_hierarchy_for_guild(guild):
     priority_roles = [
         ":(",  # Lowest priority (position 1)
         "Volunteer",
-        "Lead Event Supervisor",
+        "Lead ES",
         "Social Media",
         "Photographer",
         "Arbitrations",
@@ -2398,7 +2398,7 @@ async def get_building_events(guild_id, building):
                 room = str(row.get("Room 1", "")).strip()
 
                 # Skip priority/custom roles (only include actual events)
-                priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+                priority_roles = [":(", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
                 if event and event not in priority_roles:
                     # Create a tuple of (event, room) to avoid duplicates
                     event_room_combo = (event, room if room else "")
@@ -3842,7 +3842,7 @@ async def organize_roles_command(interaction: discord.Interaction):
 
                 embed.add_field(
                     name="📋 Priority Order (Bottom to Top)",
-                    value="1. Other roles (alphabetical)\n2. **:(**\n3. **Chapter Roles** (green, alphabetical)\n4. **Volunteer**\n5. **Lead Event Supervisor**\n6. **Social Media**\n7. **Photographer**\n8. **Arbitrations**\n9. **Awards**\n10. **Runner**\n11. **Bot Role** (highest)",
+                    value="1. Other roles (alphabetical)\n2. **:(**\n3. **Chapter Roles** (green, alphabetical)\n4. **Volunteer**\n5. **Lead ES**\n6. **Social Media**\n7. **Photographer**\n8. **Arbitrations**\n9. **Awards**\n10. **Runner**\n11. **Bot Role** (highest)",
                     inline=False
                 )
 
@@ -4848,7 +4848,7 @@ async def send_test_materials_command(interaction: discord.Interaction):
                 return
 
             # Get all roles in the server
-            priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+            priority_roles = [":(", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
 
             # Find all event roles (roles that aren't priority/system roles)
             event_roles = []
@@ -5056,7 +5056,7 @@ async def release_event_test_command(interaction: discord.Interaction, event_nam
                 return
 
             # Get all roles in the server
-            priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+            priority_roles = [":(", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
 
             if (event_name not in guild.roles and
                 event_name in priority_roles and
@@ -5183,7 +5183,7 @@ async def role_reset_command(interaction: discord.Interaction):
         return
     
     async with admin_lock:
-        priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+        priority_roles = [":(", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
 
         # Defer immediately since this will take time
         await interaction.response.defer(ephemeral=True)
