@@ -5188,8 +5188,11 @@ async def role_reset_command(interaction: discord.Interaction):
     # Counters
     nickname_count = 0
     role_count = 0
+    role_id = {}
 
     current_roles = {role.name for role in guild.roles}
+    for role in guild.roles:
+        role_id[role.name] = role.id
     new_roles = set(priority_roles + list(building_structures) + list(chapters))
     common_roles = current_roles & new_roles
     delete_roles = common_roles ^ current_roles
@@ -5202,7 +5205,8 @@ async def role_reset_command(interaction: discord.Interaction):
     try:
         # Delete custom roles (keep @everyone and bot roles)
         print("🗑️ Deleting custom roles...")
-        for role in delete_roles:
+        for role_str in delete_roles:
+            role = guild.get_role(role_id[role_str])
             # Skip @everyone, bot roles, and roles higher than bot's highest role
             if (role.name != "@everyone" and
                 not role.managed and
