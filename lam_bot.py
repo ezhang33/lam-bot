@@ -66,9 +66,9 @@ active_help_tickets = {}  # thread_id -> ticket_info
 CACHE_FILE = "bot_cache.json"
 
 # Bit to show if setup is done
-setup_done = 1
-
+admin_lock = asyncio.Lock()
 rate_limit_lock = asyncio.Lock()
+
 
 async def safe_call(coro):
     async with rate_limit_lock:
@@ -243,7 +243,7 @@ async def get_or_create_role(guild, role_name):
     """Get a role by name, or create it if it doesn't exist"""
     role = discord.utils.get(guild.roles, name=role_name)
     if role:
-        print(f"🧻 Found '{role_name}' so no longer attempting to create it")
+        #print(f"🧻 Found '{role_name}' so no longer attempting to create it")
         return role
 
     # Check if auto-creation is enabled
@@ -346,7 +346,6 @@ async def get_or_create_role(guild, role_name):
         max_retries = 3
         retry_count = 0
         while retry_count < max_retries:
-            print(f"🧻 Trying to create role '{role_name}' attempt: {retry_count}")
             try:
                 role = await guild.create_role(
                     name=role_name,
@@ -2981,16 +2980,14 @@ async def perform_member_sync(guild, data):
 @bot.tree.command(name="gettemplate", description="Get a link to the template Google Drive folder")
 async def get_template_command(interaction: discord.Interaction):
     """Provide a link to the template Google Drive folder"""
+            
     await interaction.response.defer(ephemeral=True)
-
     template_url = "https://drive.google.com/drive/folders/1drRK7pSdCpbqzJfaDhFtKlYUrf_uYsN8?usp=sharing"
-
     embed = discord.Embed(
         title="📁 Template Google Drive Folder",
         description=f"Access all the template files here:\n[**Click here to open the template folder**]({template_url})",
         color=discord.Color.blue()
     )
-
     embed.add_field(
         name="🔑 Important: Share Your Folder!",
         value=f"**When you create your own folder from this template, make sure to share it with:**\n"
@@ -3006,9 +3003,7 @@ async def get_template_command(interaction: discord.Interaction):
               f"Then use `/entertemplate` with that copied folder link!",
         inline=False
     )
-
     embed.set_footer(text="Use these templates for your Science Olympiad events")
-
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="entertemplate", description="Set a new template Google Drive folder to sync users from")
@@ -3018,341 +3013,339 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
 
     # Extract folder ID from the Google Drive link
     folder_id = None
-    setup_done = 0
     
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    if "drive.google.com/drive/folders/" in folder_link:
-        try:
-            # Extract folder ID from URL like: https://drive.google.com/drive/folders/1drRK7pSdCpbqzJfaDhFtKlYUrf_uYsN8?usp=sharing
-            folder_id = folder_link.split("/folders/")[1].split("?")[0]
-        except (IndexError, AttributeError):
-            await interaction.response.send_message(
-                "❌ Invalid Google Drive folder link format!\n\n"
-                "**Make sure to:**\n"
-                "1. Right-click your folder in Google Drive\n"
-                "2. Click 'Share'\n"
-                "3. Click 'Copy link' (NOT the address bar URL)\n"
-                "4. Paste that link here\n\n"
-                "The link should look like:\n"
-                "`https://drive.google.com/drive/folders/ABC123...?usp=sharing`",
-                ephemeral=True
-            )
-            return
-    else:
-        await interaction.response.send_message(
-            "❌ Please provide a valid Google Drive folder link!\n\n"
-            "**How to get the correct link:**\n"
-            "1. Go to Google Drive\n"
-            "2. Right-click your folder\n"
-            "3. Click 'Share'\n"
-            "4. Click 'Copy link' (NOT the address bar URL)\n"
-            "5. Paste that link here\n\n"
-            "⚠️ **Don't use the address bar URL** - it won't work!\n"
-            "Use the 'Copy link' button in the Share dialog instead.",
-            ephemeral=True
-        )
-        return
-
-    # Show "thinking" message
-    await interaction.response.defer(ephemeral=True)
-
-    try:
-        # Try to access the folder and find the template sheet
-        print(f"🔍 Searching for '{SHEET_FILE_NAME}' in folder: {folder_id}")
-
-        # Use Google Drive API to search within the specific folder
-        found_sheet = None
-        try:
-            # Search for Google Sheets files within the specific folder
-            print("🔍 Searching within the specified folder...")
-            print(f"🔍 DEBUG: Folder ID: {folder_id}")
-            print(f"🔍 DEBUG: Service account email: {SERVICE_EMAIL}")
-
-            # Create a Drive API service using the same credentials
-            from googleapiclient.discovery import build
-            from oauth2client.service_account import ServiceAccountCredentials
-
-            # Build Drive API service
-            print("🔍 DEBUG: Building Drive API service...")
-            drive_service = build('drive', 'v3', credentials=creds)
-            print("✅ DEBUG: Drive API service built successfully")
-
-            # Search for Google Sheets files in the specific folder
-            # Query: files in the folder that are Google Sheets and contain the name
-            query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains '{SHEET_FILE_NAME}'"
-            print(f"🔍 DEBUG: Search query: {query}")
-
-            print("🔍 DEBUG: Executing Drive API search...")
-            results = drive_service.files().list(
-                q=query,
-                fields='files(id, name)',
-                pageSize=10
-            ).execute()
-            print("✅ DEBUG: Drive API search completed")
-
-            files = results.get('files', [])
-            print(f"🔍 Found {len(files)} potential sheets in folder")
-
-            # Debug: Show all files found
-            if files:
-                print("📋 DEBUG: Files found in folder:")
-                for file in files:
-                    print(f"  • {file['name']} (ID: {file['id']})")
-            else:
-                print("📋 DEBUG: No files found in folder")
-
-            # Look for exact match
-            target_sheet_id = None
-            for file in files:
-                print(f"🔍 DEBUG: Checking file: {file['name']}")
-                if SHEET_FILE_NAME in file['name']:
-                    target_sheet_id = file['id']
-                    print(f"✅ Found target sheet: {file['name']} (ID: {target_sheet_id})")
-                    break
-
-            if target_sheet_id:
-                # Try to open the sheet using its ID
-                print(f"🔍 DEBUG: Attempting to open sheet with ID: {target_sheet_id}")
-                try:
-                    found_sheet = gc.open_by_key(target_sheet_id)
-                    print(f"✅ Successfully opened sheet: {found_sheet.title}")
-                except Exception as e:
-                    print(f"⚠️ Error opening sheet by ID: {e}")
-                    print(f"⚠️ DEBUG: Error type: {type(e)}")
-                    print(f"⚠️ DEBUG: Error details: {str(e)}")
-                    # Fallback to searching all accessible sheets
-                    print("📋 Falling back to global search...")
-                    try:
-                        print(f"🔍 DEBUG: Attempting global search for '{SHEET_FILE_NAME}'")
-                        found_sheet = gc.open(SHEET_FILE_NAME)
-                        print(f"✅ Found sheet by title: {found_sheet.title}")
-                    except gspread.SpreadsheetNotFound as e2:
-                        print("❌ Sheet not found in global search either")
-                        print(f"❌ DEBUG: Global search error: {e2}")
-                    except Exception as e3:
-                        print(f"❌ DEBUG: Other error in global search: {e3}")
-            else:
-                print("❌ DEBUG: No target sheet found with exact name match")
-
-            if not found_sheet:
-                await interaction.followup.send(
-                    f"❌ Could not find '{SHEET_FILE_NAME}' sheet in that folder!\n\n"
-                    "**Please make sure:**\n"
-                    f"• Sheet is named exactly '{SHEET_FILE_NAME}'\n"
-                    f"• Sheet is inside the folder you shared\n"
-                    f"• Folder is shared with: `{SERVICE_EMAIL}`\n"
-                    "• Sheet has proper permissions\n\n"
-                    "**Quick fix:**\n"
-                    "1. Share the folder with the service account\n"
-                    "2. Open the sheet and share it too\n\n"
-                    "💡 Use `/serviceaccount` for detailed instructions",
+    async with admin_lock:
+        if "drive.google.com/drive/folders/" in folder_link:
+            try:
+                # Extract folder ID from URL like: https://drive.google.com/drive/folders/1drRK7pSdCpbqzJfaDhFtKlYUrf_uYsN8?usp=sharing
+                folder_id = folder_link.split("/folders/")[1].split("?")[0]
+            except (IndexError, AttributeError):
+                await interaction.response.send_message(
+                    "❌ Invalid Google Drive folder link format!\n\n"
+                    "**Make sure to:**\n"
+                    "1. Right-click your folder in Google Drive\n"
+                    "2. Click 'Share'\n"
+                    "3. Click 'Copy link' (NOT the address bar URL)\n"
+                    "4. Paste that link here\n\n"
+                    "The link should look like:\n"
+                    "`https://drive.google.com/drive/folders/ABC123...?usp=sharing`",
                     ephemeral=True
                 )
                 return
-
-        except Exception as e:
-            error_msg = str(e)
-            print(f"❌ DEBUG: Exception caught in main try block:")
-            print(f"❌ DEBUG: Exception type: {type(e)}")
-            print(f"❌ DEBUG: Exception message: {error_msg}")
-            print(f"❌ DEBUG: Exception args: {e.args}")
-
-            if "403" in error_msg or "insufficient" in error_msg.lower() or "permission" in error_msg.lower():
-                print("❌ DEBUG: Treating as permission error")
-                await interaction.followup.send(
-                    "❌ **Permission Error!**\n\n"
-                    "Bot can't access your Google Sheets.\n\n"
-                    "**Fix:** Share your sheet with:\n"
-                    f"`{SERVICE_EMAIL}`\n"
-                    "Set to 'Editor' permissions.\n\n"
-                    "💡 Use `/serviceaccount` for detailed steps",
-                    ephemeral=True
-                )
-            else:
-                print("❌ DEBUG: Treating as general error")
-                await interaction.followup.send(f"❌ Error searching for sheet: {error_msg}", ephemeral=True)
+        else:
+            await interaction.response.send_message(
+                "❌ Please provide a valid Google Drive folder link!\n\n"
+                "**How to get the correct link:**\n"
+                "1. Go to Google Drive\n"
+                "2. Right-click your folder\n"
+                "3. Click 'Share'\n"
+                "4. Click 'Copy link' (NOT the address bar URL)\n"
+                "5. Paste that link here\n\n"
+                "⚠️ **Don't use the address bar URL** - it won't work!\n"
+                "Use the 'Copy link' button in the Share dialog instead.",
+                ephemeral=True
+            )
             return
 
-        # Try to access the specified worksheet of the found sheet
+        # Show "thinking" message
+        await interaction.response.defer(ephemeral=True)
+
         try:
-            print(f"🔍 DEBUG: Attempting to access worksheet data...")
-            guild_id = interaction.guild.id
+            # Try to access the folder and find the template sheet
+            print(f"🔍 Searching for '{SHEET_FILE_NAME}' in folder: {folder_id}")
 
-            # Store per-guild
-            spreadsheets[guild_id] = found_sheet
-            print(f"✅ DEBUG: Set spreadsheet for guild {guild_id} to: {found_sheet.title}")
-
-            # Try to get the worksheet by the specified name, fall back to first worksheet
-            print(f"🔍 DEBUG: Looking for worksheet: '{SHEET_PAGE_NAME}'")
+            # Use Google Drive API to search within the specific folder
+            found_sheet = None
             try:
-                sheets[guild_id] = spreadsheets[guild_id].worksheet(SHEET_PAGE_NAME)
-                print(f"✅ Connected to worksheet: '{SHEET_PAGE_NAME}'")
-            except gspread.WorksheetNotFound as e:
-                print(f"⚠️ Worksheet '{SHEET_PAGE_NAME}' not found, using first available worksheet")
-                print(f"⚠️ DEBUG: WorksheetNotFound error: {e}")
-                try:
-                    available_sheets_list = [ws.title for ws in spreadsheets[guild_id].worksheets()]
-                    print(f"📋 Available worksheets: {', '.join(available_sheets_list)}")
-                    sheets[guild_id] = spreadsheets[guild_id].worksheets()[0]  # Fall back to first worksheet
-                    print(f"✅ Connected to worksheet: '{sheets[guild_id].title}'")
-                except Exception as e2:
-                    print(f"❌ DEBUG: Error getting worksheets: {e2}")
-                    raise e2
+                # Search for Google Sheets files within the specific folder
+                print("🔍 Searching within the specified folder...")
+                print(f"🔍 DEBUG: Folder ID: {folder_id}")
+                print(f"🔍 DEBUG: Service account email: {SERVICE_EMAIL}")
 
-            # Test access by getting sheet info
-            print(f"🔍 DEBUG: Testing sheet access by reading data...")
-            try:
-                test_data = sheets[guild_id].get_all_records()
-                print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
+                # Create a Drive API service using the same credentials
+                from googleapiclient.discovery import build
+                from oauth2client.service_account import ServiceAccountCredentials
+
+                # Build Drive API service
+                print("🔍 DEBUG: Building Drive API service...")
+                drive_service = build('drive', 'v3', credentials=creds)
+                print("✅ DEBUG: Drive API service built successfully")
+
+                # Search for Google Sheets files in the specific folder
+                # Query: files in the folder that are Google Sheets and contain the name
+                query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains '{SHEET_FILE_NAME}'"
+                print(f"🔍 DEBUG: Search query: {query}")
+
+                print("🔍 DEBUG: Executing Drive API search...")
+                results = drive_service.files().list(
+                    q=query,
+                    fields='files(id, name)',
+                    pageSize=10
+                ).execute()
+                print("✅ DEBUG: Drive API search completed")
+
+                files = results.get('files', [])
+                print(f"🔍 Found {len(files)} potential sheets in folder")
+
+                # Debug: Show all files found
+                if files:
+                    print("📋 DEBUG: Files found in folder:")
+                    for file in files:
+                        print(f"  • {file['name']} (ID: {file['id']})")
+                else:
+                    print("📋 DEBUG: No files found in folder")
+
+                # Look for exact match
+                target_sheet_id = None
+                for file in files:
+                    print(f"🔍 DEBUG: Checking file: {file['name']}")
+                    if SHEET_FILE_NAME in file['name']:
+                        target_sheet_id = file['id']
+                        print(f"✅ Found target sheet: {file['name']} (ID: {target_sheet_id})")
+                        break
+
+                if target_sheet_id:
+                    # Try to open the sheet using its ID
+                    print(f"🔍 DEBUG: Attempting to open sheet with ID: {target_sheet_id}")
+                    try:
+                        found_sheet = gc.open_by_key(target_sheet_id)
+                        print(f"✅ Successfully opened sheet: {found_sheet.title}")
+                    except Exception as e:
+                        print(f"⚠️ Error opening sheet by ID: {e}")
+                        print(f"⚠️ DEBUG: Error type: {type(e)}")
+                        print(f"⚠️ DEBUG: Error details: {str(e)}")
+                        # Fallback to searching all accessible sheets
+                        print("📋 Falling back to global search...")
+                        try:
+                            print(f"🔍 DEBUG: Attempting global search for '{SHEET_FILE_NAME}'")
+                            found_sheet = gc.open(SHEET_FILE_NAME)
+                            print(f"✅ Found sheet by title: {found_sheet.title}")
+                        except gspread.SpreadsheetNotFound as e2:
+                            print("❌ Sheet not found in global search either")
+                            print(f"❌ DEBUG: Global search error: {e2}")
+                        except Exception as e3:
+                            print(f"❌ DEBUG: Other error in global search: {e3}")
+                else:
+                    print("❌ DEBUG: No target sheet found with exact name match")
+
+                if not found_sheet:
+                    await interaction.followup.send(
+                        f"❌ Could not find '{SHEET_FILE_NAME}' sheet in that folder!\n\n"
+                        "**Please make sure:**\n"
+                        f"• Sheet is named exactly '{SHEET_FILE_NAME}'\n"
+                        f"• Sheet is inside the folder you shared\n"
+                        f"• Folder is shared with: `{SERVICE_EMAIL}`\n"
+                        "• Sheet has proper permissions\n\n"
+                        "**Quick fix:**\n"
+                        "1. Share the folder with the service account\n"
+                        "2. Open the sheet and share it too\n\n"
+                        "💡 Use `/serviceaccount` for detailed instructions",
+                        ephemeral=True
+                    )
+                    return
+
             except Exception as e:
-                print(f"❌ DEBUG: Error reading sheet data: {e}")
-                print(f"❌ DEBUG: Error type: {type(e)}")
-                print(f"❌ DEBUG: Error details: {str(e)}")
-                raise e
+                error_msg = str(e)
+                print(f"❌ DEBUG: Exception caught in main try block:")
+                print(f"❌ DEBUG: Exception type: {type(e)}")
+                print(f"❌ DEBUG: Exception message: {error_msg}")
+                print(f"❌ DEBUG: Exception args: {e.args}")
 
-            # Pre-create all building structures and channels from the sheet data
-            print("🏗️ Pre-creating all building structures and channels...")
-            try:
-                guild = interaction.guild
-                if guild:
-                    # Extract all unique building/event combinations from the sheet
-                    building_structures = set()
-                    chapters = set()
-                    for row in test_data:
-                        building = str(row.get("Building 1", "")).strip()
-                        first_event = str(row.get("First Event", "")).strip()
-                        room = str(row.get("Room 1", "")).strip()
-                        chapter = str(row.get("Chapter", "")).strip()
-
-                        if building and first_event:
-                            # Use a tuple to track unique combinations
-                            building_structures.add((building, first_event, room))
-
-                        # Add chapters (including Unaffiliated for blank/N/A)
-                        if chapter and chapter.lower() not in ["n/a", "na", ""]:
-                            chapters.add(chapter)
-                        else:
-                            chapters.add("Unaffiliated")
-
-                    print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
-                    print(f"📖 Found {len(chapters)} unique chapters to create")
-
-                    # Create all building structures upfront
-                    for building, first_event, room in building_structures:
-                        print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
-                        await setup_building_structure(guild, building, first_event, room)
-
-                    # Create all chapter structures upfront
-                    for chapter in chapters:
-                        print(f"📖 Pre-creating chapter: {chapter}")
-                        await setup_chapter_structure(guild, chapter)
-
-                    # Sort chapter channels alphabetically
-                    print("📖 Organizing chapter channels alphabetically...")
-                    await sort_chapter_channels_alphabetically(guild)
-
-                    # Sort categories once after all structures are created
-                    print("📋 Organizing all building categories alphabetically...")
-                    await sort_building_categories_alphabetically(guild)
-
-                    print(f"✅ Pre-created {len(building_structures)} building structures")
+                if "403" in error_msg or "insufficient" in error_msg.lower() or "permission" in error_msg.lower():
+                    print("❌ DEBUG: Treating as permission error")
+                    await interaction.followup.send(
+                        "❌ **Permission Error!**\n\n"
+                        "Bot can't access your Google Sheets.\n\n"
+                        "**Fix:** Share your sheet with:\n"
+                        f"`{SERVICE_EMAIL}`\n"
+                        "Set to 'Editor' permissions.\n\n"
+                        "💡 Use `/serviceaccount` for detailed steps",
+                        ephemeral=True
+                    )
                 else:
-                    print("⚠️ Could not get guild for structure creation")
-            except Exception as structure_error:
-                print(f"⚠️ Error creating building structures: {structure_error}")
-                # Don't fail the whole command if structure creation fails
+                    print("❌ DEBUG: Treating as general error")
+                    await interaction.followup.send(f"❌ Error searching for sheet: {error_msg}", ephemeral=True)
+                return
 
-            # Check if ezhang. is already in this server and give them the :( role
-            await setup_ezhang_admin_role(guild)
-
-            # Trigger an immediate sync after successful connection and structure creation
-            print("🔄 Triggering immediate sync after template connection...")
-            sync_results = None
+            # Try to access the specified worksheet of the found sheet
             try:
-                guild = interaction.guild
-                if guild:
-                    sync_results = await perform_member_sync(guild, test_data)
-                    print(f"✅ Initial sync complete: {sync_results['processed']} processed, {sync_results['invited']} invited, {sync_results['role_assignments']} roles assigned")
-                else:
-                    print("⚠️ Could not get guild for immediate sync")
-            except Exception as sync_error:
-                print(f"⚠️ Error during immediate sync: {sync_error}")
-                # Don't fail the whole command if sync fails
+                print(f"🔍 DEBUG: Attempting to access worksheet data...")
+                guild_id = interaction.guild.id
 
-            # Create embed with sync results
-            embed = discord.Embed(
-                title="✅ Template Sheet Connected & Synced!",
-                description=f"Successfully connected to: **{found_sheet.title}**\n"
-                           f"📊 Worksheet: **{sheets[guild_id].title}**\n"
-                           f"📊 Found {len(test_data)} rows of data\n"
-                           f"🔗 Folder: [Click here]({folder_link})",
-                color=discord.Color.green()
-            )
+                # Store per-guild
+                spreadsheets[guild_id] = found_sheet
+                print(f"✅ DEBUG: Set spreadsheet for guild {guild_id} to: {found_sheet.title}")
 
-            # Add sync results if available
-            if sync_results:
-                embed.add_field(
-                    name="🔄 Immediate Sync Results",
-                    value=f"• **{sync_results['processed']}** Discord IDs processed\n"
-                          f"• **{sync_results['invited']}** new invites sent\n"
-                          f"• **{sync_results['role_assignments']}** roles assigned\n"
-                          f"• **{sync_results['nickname_updates']}** nicknames updated",
-                    inline=False
+                # Try to get the worksheet by the specified name, fall back to first worksheet
+                print(f"🔍 DEBUG: Looking for worksheet: '{SHEET_PAGE_NAME}'")
+                try:
+                    sheets[guild_id] = spreadsheets[guild_id].worksheet(SHEET_PAGE_NAME)
+                    print(f"✅ Connected to worksheet: '{SHEET_PAGE_NAME}'")
+                except gspread.WorksheetNotFound as e:
+                    print(f"⚠️ Worksheet '{SHEET_PAGE_NAME}' not found, using first available worksheet")
+                    print(f"⚠️ DEBUG: WorksheetNotFound error: {e}")
+                    try:
+                        available_sheets_list = [ws.title for ws in spreadsheets[guild_id].worksheets()]
+                        print(f"📋 Available worksheets: {', '.join(available_sheets_list)}")
+                        sheets[guild_id] = spreadsheets[guild_id].worksheets()[0]  # Fall back to first worksheet
+                        print(f"✅ Connected to worksheet: '{sheets[guild_id].title}'")
+                    except Exception as e2:
+                        print(f"❌ DEBUG: Error getting worksheets: {e2}")
+                        raise e2
+
+                # Test access by getting sheet info
+                print(f"🔍 DEBUG: Testing sheet access by reading data...")
+                try:
+                    test_data = sheets[guild_id].get_all_records()
+                    print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
+                except Exception as e:
+                    print(f"❌ DEBUG: Error reading sheet data: {e}")
+                    print(f"❌ DEBUG: Error type: {type(e)}")
+                    print(f"❌ DEBUG: Error details: {str(e)}")
+                    raise e
+
+                # Pre-create all building structures and channels from the sheet data
+                print("🏗️ Pre-creating all building structures and channels...")
+                try:
+                    guild = interaction.guild
+                    if guild:
+                        # Extract all unique building/event combinations from the sheet
+                        building_structures = set()
+                        chapters = set()
+                        for row in test_data:
+                            building = str(row.get("Building 1", "")).strip()
+                            first_event = str(row.get("First Event", "")).strip()
+                            room = str(row.get("Room 1", "")).strip()
+                            chapter = str(row.get("Chapter", "")).strip()
+
+                            if building and first_event:
+                                # Use a tuple to track unique combinations
+                                building_structures.add((building, first_event, room))
+
+                            # Add chapters (including Unaffiliated for blank/N/A)
+                            if chapter and chapter.lower() not in ["n/a", "na", ""]:
+                                chapters.add(chapter)
+                            else:
+                                chapters.add("Unaffiliated")
+
+                        print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
+                        print(f"📖 Found {len(chapters)} unique chapters to create")
+
+                        # Create all building structures upfront
+                        for building, first_event, room in building_structures:
+                            print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
+                            await setup_building_structure(guild, building, first_event, room)
+
+                        # Create all chapter structures upfront
+                        for chapter in chapters:
+                            print(f"📖 Pre-creating chapter: {chapter}")
+                            await setup_chapter_structure(guild, chapter)
+
+                        # Sort chapter channels alphabetically
+                        print("📖 Organizing chapter channels alphabetically...")
+                        await sort_chapter_channels_alphabetically(guild)
+
+                        # Sort categories once after all structures are created
+                        print("📋 Organizing all building categories alphabetically...")
+                        await sort_building_categories_alphabetically(guild)
+
+                        print(f"✅ Pre-created {len(building_structures)} building structures")
+                    else:
+                        print("⚠️ Could not get guild for structure creation")
+                except Exception as structure_error:
+                    print(f"⚠️ Error creating building structures: {structure_error}")
+                    # Don't fail the whole command if structure creation fails
+
+                # Check if ezhang. is already in this server and give them the :( role
+                await setup_ezhang_admin_role(guild)
+
+                # Trigger an immediate sync after successful connection and structure creation
+                print("🔄 Triggering immediate sync after template connection...")
+                sync_results = None
+                try:
+                    guild = interaction.guild
+                    if guild:
+                        sync_results = await perform_member_sync(guild, test_data)
+                        print(f"✅ Initial sync complete: {sync_results['processed']} processed, {sync_results['invited']} invited, {sync_results['role_assignments']} roles assigned")
+                    else:
+                        print("⚠️ Could not get guild for immediate sync")
+                except Exception as sync_error:
+                    print(f"⚠️ Error during immediate sync: {sync_error}")
+                    # Don't fail the whole command if sync fails
+
+                # Create embed with sync results
+                embed = discord.Embed(
+                    title="✅ Template Sheet Connected & Synced!",
+                    description=f"Successfully connected to: **{found_sheet.title}**\n"
+                               f"📊 Worksheet: **{sheets[guild_id].title}**\n"
+                               f"📊 Found {len(test_data)} rows of data\n"
+                               f"🔗 Folder: [Click here]({folder_link})",
+                    color=discord.Color.green()
                 )
 
-            # Add note about worksheet selection
-            note_text = "Bot will sync users from this sheet automatically every minute."
-            available_sheets_for_note = [ws.title for ws in spreadsheets[guild_id].worksheets()]
-            if len(available_sheets_for_note) > 1:
-                if sheets[guild_id].title != SHEET_PAGE_NAME:
-                    note_text += f"\n\n⚠️ Using '{sheets[guild_id].title}' ('{SHEET_PAGE_NAME}' not found)"
-                # Only show first few worksheets to avoid length issues
-                sheets_display = available_sheets_for_note[:3]
-                if len(available_sheets_for_note) > 3:
-                    sheets_display.append(f"... +{len(available_sheets_for_note)-3} more")
-                note_text += f"\n\nWorksheets: {', '.join(sheets_display)}"
+                # Add sync results if available
+                if sync_results:
+                    embed.add_field(
+                        name="🔄 Immediate Sync Results",
+                        value=f"• **{sync_results['processed']}** Discord IDs processed\n"
+                              f"• **{sync_results['invited']}** new invites sent\n"
+                              f"• **{sync_results['role_assignments']}** roles assigned\n"
+                              f"• **{sync_results['nickname_updates']}** nicknames updated",
+                        inline=False
+                    )
 
-            embed.add_field(name="📝 Note", value=note_text, inline=False)
-            embed.set_footer(text="Use /sync to manually trigger another sync anytime")
+                # Add note about worksheet selection
+                note_text = "Bot will sync users from this sheet automatically every minute."
+                available_sheets_for_note = [ws.title for ws in spreadsheets[guild_id].worksheets()]
+                if len(available_sheets_for_note) > 1:
+                    if sheets[guild_id].title != SHEET_PAGE_NAME:
+                        note_text += f"\n\n⚠️ Using '{sheets[guild_id].title}' ('{SHEET_PAGE_NAME}' not found)"
+                    # Only show first few worksheets to avoid length issues
+                    sheets_display = available_sheets_for_note[:3]
+                    if len(available_sheets_for_note) > 3:
+                        sheets_display.append(f"... +{len(available_sheets_for_note)-3} more")
+                    note_text += f"\n\nWorksheets: {', '.join(sheets_display)}"
 
-            # Save connection details to cache (per-guild)
-            save_guild_spreadsheet_to_cache(
-                guild_id,
-                spreadsheets[guild_id].id,
-                sheets[guild_id].title
-            )
-            print(f"💾 Saved spreadsheet connection to cache for guild {guild_id}")
+                embed.add_field(name="📝 Note", value=note_text, inline=False)
+                embed.set_footer(text="Use /sync to manually trigger another sync anytime")
 
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            print(f"✅ Successfully switched to sheet: {found_sheet.title}")
+                # Save connection details to cache (per-guild)
+                save_guild_spreadsheet_to_cache(
+                    guild_id,
+                    spreadsheets[guild_id].id,
+                    sheets[guild_id].title
+                )
+                print(f"💾 Saved spreadsheet connection to cache for guild {guild_id}")
 
-            # Search for and share useful links after successful template connection
-            try:
-                guild = interaction.guild
-                if guild:
-                    print("🔗 Searching for useful links after template connection...")
-                    await search_and_share_useful_links(guild)
-                    print("✅ Useful links search completed")
-            except Exception as useful_links_error:
-                print(f"⚠️ Error searching for useful links: {useful_links_error}")
-                # Don't fail the whole command if useful links search fails
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                print(f"✅ Successfully switched to sheet: {found_sheet.title}")
+
+                # Search for and share useful links after successful template connection
+                try:
+                    guild = interaction.guild
+                    if guild:
+                        print("🔗 Searching for useful links after template connection...")
+                        await search_and_share_useful_links(guild)
+                        print("✅ Useful links search completed")
+                except Exception as useful_links_error:
+                    print(f"⚠️ Error searching for useful links: {useful_links_error}")
+                    # Don't fail the whole command if useful links search fails
+
+            except Exception as e:
+                await interaction.followup.send(f"❌ Error accessing sheet data: {str(e)}", ephemeral=True)
+                return
 
         except Exception as e:
-            await interaction.followup.send(f"❌ Error accessing sheet data: {str(e)}", ephemeral=True)
+            print(f"❌ DEBUG: Exception caught in outer try block:")
+            print(f"❌ DEBUG: Exception type: {type(e)}")
+            print(f"❌ DEBUG: Exception message: {str(e)}")
+            print(f"❌ DEBUG: Exception args: {e.args}")
+            await interaction.followup.send(f"❌ Error processing folder: {str(e)}", ephemeral=True)
             return
-
-    except Exception as e:
-        print(f"❌ DEBUG: Exception caught in outer try block:")
-        print(f"❌ DEBUG: Exception type: {type(e)}")
-        print(f"❌ DEBUG: Exception message: {str(e)}")
-        print(f"❌ DEBUG: Exception args: {e.args}")
-        await interaction.followup.send(f"❌ Error processing folder: {str(e)}", ephemeral=True)
-        return
-
-    setup_done = 1
 
 
 @bot.tree.command(name="sync", description="Manually trigger a member sync from the current Google Sheet (admin only)")
@@ -3364,56 +3357,58 @@ async def sync_command(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
+    async with admin_lock:
 
-    try:
-        # Run the sync function
-        print("🔄 Manual sync triggered by", interaction.user)
-
-        # Use the guild where the command was called
-        guild = interaction.guild
-        if guild is None:
-            await interaction.followup.send("❌ This command must be used in a server!", ephemeral=True)
-            return
-
-        guild_id = guild.id
-
-        # Check if we have a sheet connected for this guild
-        if guild_id not in sheets:
-            await interaction.followup.send(
-                "❌ No sheet connected for this server!\n\n"
-                f"Use `/entertemplate` to connect to a Google Drive folder with a '{SHEET_FILE_NAME}' sheet first.",
-                ephemeral=True
-            )
-            return
-
-        # Get current sheet data
+        await interaction.response.defer(ephemeral=True)
+    
         try:
-            data = sheets[guild_id].get_all_records()
-            print(f"📊 Found {len(data)} rows in spreadsheet for guild {guild_id}")
+            # Run the sync function
+            print("🔄 Manual sync triggered by", interaction.user)
+    
+            # Use the guild where the command was called
+            guild = interaction.guild
+            if guild is None:
+                await interaction.followup.send("❌ This command must be used in a server!", ephemeral=True)
+                return
+    
+            guild_id = guild.id
+    
+            # Check if we have a sheet connected for this guild
+            if guild_id not in sheets:
+                await interaction.followup.send(
+                    "❌ No sheet connected for this server!\n\n"
+                    f"Use `/entertemplate` to connect to a Google Drive folder with a '{SHEET_FILE_NAME}' sheet first.",
+                    ephemeral=True
+                )
+                return
+    
+            # Get current sheet data
+            try:
+                data = sheets[guild_id].get_all_records()
+                print(f"📊 Found {len(data)} rows in spreadsheet for guild {guild_id}")
+            except Exception as e:
+                await interaction.followup.send(f"❌ Could not fetch sheet data: {str(e)}", ephemeral=True)
+                return
+    
+            # Run the sync using the shared function
+            sync_results = await perform_member_sync(guild, data)
+    
+            embed = discord.Embed(
+                title="✅ Manual Sync Complete!",
+                description=f"📊 **Processed:** {sync_results['processed']} valid Discord IDs\n"
+                           f"👥 **Current members:** {len(guild.members)}\n"
+                           f"📨 **New invites sent:** {sync_results['invited']}\n"
+                           f"🎭 **Role assignments:** {sync_results['role_assignments']}\n"
+                           f"📝 **Nickname updates:** {sync_results['nickname_updates']}\n"
+                           f"📋 **Total sheet rows:** {sync_results['total_rows']}",
+                color=discord.Color.green()
+            )
+            embed.set_footer(text="Sync completed successfully")
+    
+            await interaction.followup.send(embed=embed, ephemeral=True)
+    
         except Exception as e:
-            await interaction.followup.send(f"❌ Could not fetch sheet data: {str(e)}", ephemeral=True)
-            return
-
-        # Run the sync using the shared function
-        sync_results = await perform_member_sync(guild, data)
-
-        embed = discord.Embed(
-            title="✅ Manual Sync Complete!",
-            description=f"📊 **Processed:** {sync_results['processed']} valid Discord IDs\n"
-                       f"👥 **Current members:** {len(guild.members)}\n"
-                       f"📨 **New invites sent:** {sync_results['invited']}\n"
-                       f"🎭 **Role assignments:** {sync_results['role_assignments']}\n"
-                       f"📝 **Nickname updates:** {sync_results['nickname_updates']}\n"
-                       f"📋 **Total sheet rows:** {sync_results['total_rows']}",
-            color=discord.Color.green()
-        )
-        embed.set_footer(text="Sync completed successfully")
-
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error during manual sync: {str(e)}", ephemeral=True)
+            await interaction.followup.send(f"❌ Error during manual sync: {str(e)}", ephemeral=True)
 
 @bot.tree.command(name="sheetinfo", description="Show information about the currently connected Google Sheet")
 async def sheet_info_command(interaction: discord.Interaction):
@@ -3708,6 +3703,12 @@ async def help_command(interaction: discord.Interaction):
 @bot.tree.command(name="serviceaccount", description="Show the service account email for sharing Google Sheets")
 async def service_account_command(interaction: discord.Interaction):
     """Show the service account email that needs access to Google Sheets"""
+
+    # Check if user has permission
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+    
     await interaction.response.defer(ephemeral=True)
 
     embed = discord.Embed(
@@ -3754,89 +3755,91 @@ async def organize_roles_command(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
+    async with admin_lock:
 
-    try:
-        print(f"🎭 Manual role organization triggered by {interaction.user}")
+        await interaction.response.defer(ephemeral=True)
 
-        # Check bot permissions first
-        if not interaction.guild.me.guild_permissions.manage_roles:
-            embed = discord.Embed(
-                title="❌ Missing Permissions!",
-                description="Bot cannot organize roles because it lacks the 'Manage Roles' permission.",
-                color=discord.Color.red()
-            )
-            embed.add_field(
-                name="🔧 How to Fix",
-                value="1. Go to **Server Settings** → **Roles**\n2. Find the bot's role\n3. Enable **'Manage Roles'** permission\n4. Try this command again",
-                inline=False
-            )
+        try:
+            print(f"🎭 Manual role organization triggered by {interaction.user}")
+
+            # Check bot permissions first
+            if not interaction.guild.me.guild_permissions.manage_roles:
+                embed = discord.Embed(
+                    title="❌ Missing Permissions!",
+                    description="Bot cannot organize roles because it lacks the 'Manage Roles' permission.",
+                    color=discord.Color.red()
+                )
+                embed.add_field(
+                    name="🔧 How to Fix",
+                    value="1. Go to **Server Settings** → **Roles**\n2. Find the bot's role\n3. Enable **'Manage Roles'** permission\n4. Try this command again",
+                    inline=False
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                return
+
+            # Get bot role position
+            bot_role = None
+            for role in interaction.guild.roles:
+                if role.managed and role.members and interaction.guild.me in role.members:
+                    bot_role = role
+                    break
+
+            # Organize roles
+            await organize_role_hierarchy_for_guild(interaction.guild)
+
+            # Check if there were permission issues
+            higher_roles = [r for r in interaction.guild.roles if r.position >= (bot_role.position if bot_role else 0) and r.name != "@everyone" and r != bot_role]
+
+            if higher_roles:
+                embed = discord.Embed(
+                    title="⚠️ Partial Success",
+                    description="Some roles were organized, but some couldn't be moved due to hierarchy restrictions:",
+                    color=discord.Color.orange()
+                )
+
+                embed.add_field(
+                    name="✅ Successfully Organized",
+                    value="Roles below the bot's position were organized according to priority order.",
+                    inline=False
+                )
+
+                embed.add_field(
+                    name="❌ Couldn't Move",
+                    value=f"These roles are higher than the bot:\n• {', '.join([r.name for r in higher_roles[:5]])}" +
+                          (f"\n• ... and {len(higher_roles)-5} more" if len(higher_roles) > 5 else ""),
+                    inline=False
+                )
+
+                embed.add_field(
+                    name="🔧 To Fix This",
+                    value=f"1. Go to **Server Settings** → **Roles**\n2. Drag **{bot_role.name if bot_role else 'bot role'}** to the **TOP** of the role list\n3. Run this command again",
+                    inline=False
+                )
+            else:
+                embed = discord.Embed(
+                    title="✅ Roles Organized Successfully!",
+                    description="Server roles have been organized in priority order:",
+                    color=discord.Color.green()
+                )
+
+                embed.add_field(
+                    name="📋 Priority Order (Bottom to Top)",
+                    value="1. Other roles (alphabetical)\n2. **:(**\n3. **Chapter Roles** (green, alphabetical)\n4. **Volunteer**\n5. **Lead Event Supervisor**\n6. **Social Media**\n7. **Photographer**\n8. **Arbitrations**\n9. **Awards**\n10. **Runner**\n11. **Bot Role** (highest)",
+                    inline=False
+                )
+
+                embed.add_field(
+                    name="💡 Benefits",
+                    value="• Bot can now manage all user nicknames\n• Proper permission inheritance\n• Clean role hierarchy",
+                    inline=False
+                )
+
+            embed.set_footer(text="Role organization complete!")
             await interaction.followup.send(embed=embed, ephemeral=True)
-            return
 
-        # Get bot role position
-        bot_role = None
-        for role in interaction.guild.roles:
-            if role.managed and role.members and interaction.guild.me in role.members:
-                bot_role = role
-                break
-
-        # Organize roles
-        await organize_role_hierarchy_for_guild(interaction.guild)
-
-        # Check if there were permission issues
-        higher_roles = [r for r in interaction.guild.roles if r.position >= (bot_role.position if bot_role else 0) and r.name != "@everyone" and r != bot_role]
-
-        if higher_roles:
-            embed = discord.Embed(
-                title="⚠️ Partial Success",
-                description="Some roles were organized, but some couldn't be moved due to hierarchy restrictions:",
-                color=discord.Color.orange()
-            )
-
-            embed.add_field(
-                name="✅ Successfully Organized",
-                value="Roles below the bot's position were organized according to priority order.",
-                inline=False
-            )
-
-            embed.add_field(
-                name="❌ Couldn't Move",
-                value=f"These roles are higher than the bot:\n• {', '.join([r.name for r in higher_roles[:5]])}" +
-                      (f"\n• ... and {len(higher_roles)-5} more" if len(higher_roles) > 5 else ""),
-                inline=False
-            )
-
-            embed.add_field(
-                name="🔧 To Fix This",
-                value=f"1. Go to **Server Settings** → **Roles**\n2. Drag **{bot_role.name if bot_role else 'bot role'}** to the **TOP** of the role list\n3. Run this command again",
-                inline=False
-            )
-        else:
-            embed = discord.Embed(
-                title="✅ Roles Organized Successfully!",
-                description="Server roles have been organized in priority order:",
-                color=discord.Color.green()
-            )
-
-            embed.add_field(
-                name="📋 Priority Order (Bottom to Top)",
-                value="1. Other roles (alphabetical)\n2. **:(**\n3. **Chapter Roles** (green, alphabetical)\n4. **Volunteer**\n5. **Lead Event Supervisor**\n6. **Social Media**\n7. **Photographer**\n8. **Arbitrations**\n9. **Awards**\n10. **Runner**\n11. **Bot Role** (highest)",
-                inline=False
-            )
-
-            embed.add_field(
-                name="💡 Benefits",
-                value="• Bot can now manage all user nicknames\n• Proper permission inheritance\n• Clean role hierarchy",
-                inline=False
-            )
-
-        embed.set_footer(text="Role organization complete!")
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error organizing roles: {str(e)}", ephemeral=True)
-        print(f"❌ Error organizing roles: {e}")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error organizing roles: {str(e)}", ephemeral=True)
+            print(f"❌ Error organizing roles: {e}")
 
 @bot.tree.command(name="reloadcommands", description="Manually sync slash commands with Discord (Admin only)")
 async def reload_commands_command(interaction: discord.Interaction):
@@ -3915,7 +3918,7 @@ async def reload_commands_command(interaction: discord.Interaction):
 async def login_command(interaction: discord.Interaction, email: str, password: str):
     """Login with email and password to get assigned roles"""
 
-    if setup_done == 0:
+    if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
     
@@ -4194,61 +4197,63 @@ async def assign_runner_zones_command(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
+    async with admin_lock:
 
-    # Verify spreadsheet connection
-    guild_id = interaction.guild.id
-    if guild_id not in spreadsheets:
-        await interaction.followup.send(
-            "❌ No spreadsheet connected for this server! Use `/entertemplate` first to connect your sheet.",
-            ephemeral=True
-        )
-        return
-
-    spreadsheet = spreadsheets[guild_id]
-
-    # Open the worksheet or find a separate spreadsheet in the same Drive folder
-    worksheet_name = "Runner Assignments"
-    ws = None
-    try:
-        ws = spreadsheet.worksheet(worksheet_name)
-    except Exception:
-        # If not a tab in the current spreadsheet, search the parent Drive folder for a spreadsheet named like it
-        try:
-            from googleapiclient.discovery import build
-            drive_service = build('drive', 'v3', credentials=creds)
-            # Get parent folder of the currently connected spreadsheet
-            sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
-            parent_folders = sheet_metadata.get('parents', [])
-            if not parent_folders:
-                await interaction.followup.send("❌ Could not determine parent folder to search for 'Runner Assignments' sheet.", ephemeral=True)
-                return
-            parent_folder_id = parent_folders[0]
-            # Search spreadsheets in same folder
-            q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains '{worksheet_name}'"
-            results = drive_service.files().list(q=q, fields='files(id, name)').execute()
-            files = results.get('files', [])
-            if not files:
-                await interaction.followup.send(f"❌ Could not find a spreadsheet named '{worksheet_name}' in the same folder as the template.", ephemeral=True)
-                return
-            target = files[0]
-            other_sheet = gc.open_by_key(target['id'])
-            # Prefer a worksheet named exactly worksheet_name; otherwise first tab
-            try:
-                ws = other_sheet.worksheet(worksheet_name)
-            except Exception:
-                ws = other_sheet.worksheets()[0]
-        except Exception as e2:
-            await interaction.followup.send(f"❌ Could not locate '{worksheet_name}' in the same Drive folder: {str(e2)}", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+    
+        # Verify spreadsheet connection
+        guild_id = interaction.guild.id
+        if guild_id not in spreadsheets:
+            await interaction.followup.send(
+                "❌ No spreadsheet connected for this server! Use `/entertemplate` first to connect your sheet.",
+                ephemeral=True
+            )
             return
-
-    # Fetch data
-    try:
-        headers = ws.row_values(1)
-        rows = ws.get_all_records()
-    except Exception as e:
-        await interaction.followup.send(f"❌ Could not read worksheet data: {str(e)}", ephemeral=True)
-        return
+    
+        spreadsheet = spreadsheets[guild_id]
+    
+        # Open the worksheet or find a separate spreadsheet in the same Drive folder
+        worksheet_name = "Runner Assignments"
+        ws = None
+        try:
+            ws = spreadsheet.worksheet(worksheet_name)
+        except Exception:
+            # If not a tab in the current spreadsheet, search the parent Drive folder for a spreadsheet named like it
+            try:
+                from googleapiclient.discovery import build
+                drive_service = build('drive', 'v3', credentials=creds)
+                # Get parent folder of the currently connected spreadsheet
+                sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
+                parent_folders = sheet_metadata.get('parents', [])
+                if not parent_folders:
+                    await interaction.followup.send("❌ Could not determine parent folder to search for 'Runner Assignments' sheet.", ephemeral=True)
+                    return
+                parent_folder_id = parent_folders[0]
+                # Search spreadsheets in same folder
+                q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains '{worksheet_name}'"
+                results = drive_service.files().list(q=q, fields='files(id, name)').execute()
+                files = results.get('files', [])
+                if not files:
+                    await interaction.followup.send(f"❌ Could not find a spreadsheet named '{worksheet_name}' in the same folder as the template.", ephemeral=True)
+                    return
+                target = files[0]
+                other_sheet = gc.open_by_key(target['id'])
+                # Prefer a worksheet named exactly worksheet_name; otherwise first tab
+                try:
+                    ws = other_sheet.worksheet(worksheet_name)
+                except Exception:
+                    ws = other_sheet.worksheets()[0]
+            except Exception as e2:
+                await interaction.followup.send(f"❌ Could not locate '{worksheet_name}' in the same Drive folder: {str(e2)}", ephemeral=True)
+                return
+    
+        # Fetch data
+        try:
+            headers = ws.row_values(1)
+            rows = ws.get_all_records()
+        except Exception as e:
+            await interaction.followup.send(f"❌ Could not read worksheet data: {str(e)}", ephemeral=True)
+            return
 
     # Normalize header names for lookups
     def _find_col_index(name_candidates):
@@ -4797,76 +4802,78 @@ async def send_test_materials_command(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
+    async with admin_lock:
 
-    try:
-        guild = interaction.guild
+        await interaction.response.defer(ephemeral=True)
 
-        print(f"📚 Manual test materials request by {interaction.user} for all events")
+        try:
+            guild = interaction.guild
 
-        # Check if we have a spreadsheet connected
-        guild_id = guild.id
-        if guild_id not in spreadsheets:
+            print(f"📚 Manual test materials request by {interaction.user} for all events")
+
+            # Check if we have a spreadsheet connected
+            guild_id = guild.id
+            if guild_id not in spreadsheets:
+                await interaction.followup.send(
+                    "❌ No spreadsheet connected for this server!\n\n"
+                    "Use `/entertemplate` to connect to a Google Drive folder first.",
+                    ephemeral=True
+                )
+                return
+
+            # Get all roles in the server
+            priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+
+            # Find all event roles (roles that aren't priority/system roles)
+            event_roles = []
+            for role in guild.roles:
+                # Skip @everyone, bot-managed roles, and priority roles
+                if (role.name != "@everyone" and
+                    not role.managed and
+                    role.name not in priority_roles and
+                    role.name not in chapter_role_names):  # Skip chapter roles too
+                    event_roles.append(role.name)
+
+            if not event_roles:
+                await interaction.followup.send(
+                    "❌ No event roles found in this server!\n\n"
+                    "Make sure you've run `/entertemplate` to create event roles first.",
+                    ephemeral=True
+                )
+                return
+
+            # Send initial status
             await interaction.followup.send(
-                "❌ No spreadsheet connected for this server!\n\n"
-                "Use `/entertemplate` to connect to a Google Drive folder first.",
+                f"🔍 Searching for test materials for {len(event_roles)} event(s)...\n\n"
+                f"This may take a while. Check the event channels for results.",
                 ephemeral=True
             )
-            return
 
-        # Get all roles in the server
-        priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+            # Loop through all event roles and send test materials
+            success_count = 0
+            for role_name in event_roles:
+                try:
+                    print(f"📚 Searching test materials for: {role_name}")
+                    await search_and_share_test_folder(guild, role_name)
+                    success_count += 1
+                    # Small delay to avoid rate limiting
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    print(f"⚠️ Error sending test materials for {role_name}: {e}")
 
-        # Find all event roles (roles that aren't priority/system roles)
-        event_roles = []
-        for role in guild.roles:
-            # Skip @everyone, bot-managed roles, and priority roles
-            if (role.name != "@everyone" and
-                not role.managed and
-                role.name not in priority_roles and
-                role.name not in chapter_role_names):  # Skip chapter roles too
-                event_roles.append(role.name)
-
-        if not event_roles:
-            await interaction.followup.send(
-                "❌ No event roles found in this server!\n\n"
-                "Make sure you've run `/entertemplate` to create event roles first.",
-                ephemeral=True
+            result_embed = discord.Embed(
+                title="✅ All Test materials send",
+                description=f"The server has completed the task to send test materials for {success_count}/{len(event_roles)} events !",
+                color=discord.Color.green()
             )
-            return
 
-        # Send initial status
-        await interaction.followup.send(
-            f"🔍 Searching for test materials for {len(event_roles)} event(s)...\n\n"
-            f"This may take a while. Check the event channels for results.",
-            ephemeral=True
-        )
+            print(f"✅ Test materials command completed: {success_count}/{len(event_roles)} events processed")
 
-        # Loop through all event roles and send test materials
-        success_count = 0
-        for role_name in event_roles:
-            try:
-                print(f"📚 Searching test materials for: {role_name}")
-                await search_and_share_test_folder(guild, role_name)
-                success_count += 1
-                # Small delay to avoid rate limiting
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                print(f"⚠️ Error sending test materials for {role_name}: {e}")
-
-        result_embed = discord.Embed(
-            title="✅ All Test materials send",
-            description=f"The server has completed the task to send test materials for {success_count}/{len(event_roles)} events !",
-            color=discord.Color.green()
-        )
-
-        print(f"✅ Test materials command completed: {success_count}/{len(event_roles)} events processed")
-
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error sending test materials: {str(e)}", ephemeral=True)
-        print(f"❌ Send test materials error: {e}")
-        import traceback
-        traceback.print_exc()
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error sending test materials: {str(e)}", ephemeral=True)
+            print(f"❌ Send test materials error: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 @bot.tree.command(name="cacheinfo", description="Show cached spreadsheet connection info (Admin only)")
@@ -4949,39 +4956,41 @@ async def clear_cache_command(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
+    async with admin_lock:
 
-    try:
-        guild_id = interaction.guild.id
+        await interaction.response.defer(ephemeral=True)
 
-        # Clear the guild-specific cache
-        cleared = clear_guild_cache(guild_id)
+        try:
+            guild_id = interaction.guild.id
 
-        # Also clear the current connection for this guild
-        if guild_id in sheets:
-            del sheets[guild_id]
-        if guild_id in spreadsheets:
-            del spreadsheets[guild_id]
+            # Clear the guild-specific cache
+            cleared = clear_guild_cache(guild_id)
 
-        if cleared or guild_id in sheets or guild_id in spreadsheets:
-            embed = discord.Embed(
-                title="🗑️ Cache Cleared",
-                description="Cached spreadsheet connection for this server has been cleared.\nUse `/entertemplate` to reconnect to a sheet.",
-                color=discord.Color.green()
-            )
-        else:
-            embed = discord.Embed(
-                title="📄 No Cache Found",
-                description="No cached connection found for this server.",
-                color=discord.Color.orange()
-            )
+            # Also clear the current connection for this guild
+            if guild_id in sheets:
+                del sheets[guild_id]
+            if guild_id in spreadsheets:
+                del spreadsheets[guild_id]
 
-        await interaction.followup.send(embed=embed)
-        print(f"🧹 Admin cleared the cache for guild {guild_id} via command")
+            if cleared or guild_id in sheets or guild_id in spreadsheets:
+                embed = discord.Embed(
+                    title="🗑️ Cache Cleared",
+                    description="Cached spreadsheet connection for this server has been cleared.\nUse `/entertemplate` to reconnect to a sheet.",
+                    color=discord.Color.green()
+                )
+            else:
+                embed = discord.Embed(
+                    title="📄 No Cache Found",
+                    description="No cached connection found for this server.",
+                    color=discord.Color.orange()
+                )
 
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error clearing cache: {str(e)}")
-        print(f"❌ Clear cache error: {e}")
+            await interaction.followup.send(embed=embed)
+            print(f"🧹 Admin cleared the cache for guild {guild_id} via command")
+
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error clearing cache: {str(e)}")
+            print(f"❌ Clear cache error: {e}")
 
 @bot.tree.command(name="releaseeventtest", description="Send test materials for a specific event (Admin only)")
 @app_commands.describe(event_name="Event you want to release tests for")
@@ -4993,64 +5002,66 @@ async def release_event_test_command(interaction: discord.Interaction, event_nam
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
+    async with admin_lock:
 
-    try:
-        guild = interaction.guild
+        await interaction.response.defer(ephemeral=True)
 
-        print(f"📚 Manual test materials request by {interaction.user} for {event_name}")
-
-        # Check if we have a spreadsheet connected
-        guild_id = guild.id
-        if guild_id not in spreadsheets:
-            await interaction.followup.send(
-                "❌ No spreadsheet connected for this server!\n\n"
-                "Use `/entertemplate` to connect to a Google Drive folder first.",
-                ephemeral=True
-            )
-            return
-
-        # Get all roles in the server
-        priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
-
-        if (event_name not in guild.roles and
-            event_name in priority_roles and
-            event_name in chapter_role_names):
-            await interaction.followup.send(
-                "❌ This event does not exist in this server or is not an appropriate argument!",
-                ephemeral=True
-            )
-            return
-
-        # Send initial status
-        await interaction.followup.send(
-            f"🔍 Searching for test materials for {event_name}...\n\n"
-            f"This may take a while. Check the event channels for results.",
-            ephemeral=True
-        )
-
-        # Loop through all event roles and send test materials
         try:
-            print(f"📚 Searching test materials for: {event_name}")
-            await search_and_share_test_folder(guild, event_name)
-            # Small delay to avoid rate limiting
-            await asyncio.sleep(0.5)
+            guild = interaction.guild
+
+            print(f"📚 Manual test materials request by {interaction.user} for {event_name}")
+
+            # Check if we have a spreadsheet connected
+            guild_id = guild.id
+            if guild_id not in spreadsheets:
+                await interaction.followup.send(
+                    "❌ No spreadsheet connected for this server!\n\n"
+                    "Use `/entertemplate` to connect to a Google Drive folder first.",
+                    ephemeral=True
+                )
+                return
+
+            # Get all roles in the server
+            priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+
+            if (event_name not in guild.roles and
+                event_name in priority_roles and
+                event_name in chapter_role_names):
+                await interaction.followup.send(
+                    "❌ This event does not exist in this server or is not an appropriate argument!",
+                    ephemeral=True
+                )
+                return
+
+            # Send initial status
+            await interaction.followup.send(
+                f"🔍 Searching for test materials for {event_name}...\n\n"
+                f"This may take a while. Check the event channels for results.",
+                ephemeral=True
+            )
+
+            # Loop through all event roles and send test materials
+            try:
+                print(f"📚 Searching test materials for: {event_name}")
+                await search_and_share_test_folder(guild, event_name)
+                # Small delay to avoid rate limiting
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                print(f"⚠️ Error sending test materials for {event_name}: {e}")
+
+            result_embed = discord.Embed(
+                title=f"✅ All Test materials send for {event_name}",
+                description=f"The server has completed the task to send test materials for {event_name}!",
+                color=discord.Color.green()
+            )
+
+            print(f"✅ Test materials command completed for {event_name}")
+
         except Exception as e:
-            print(f"⚠️ Error sending test materials for {event_name}: {e}")
-
-        result_embed = discord.Embed(
-            title=f"✅ All Test materials send for {event_name}",
-            description=f"The server has completed the task to send test materials for {event_name}!",
-            color=discord.Color.green()
-        )
-
-        print(f"✅ Test materials command completed for {event_name}")
-
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error sending test materials for {event_name}: {str(e)}", ephemeral=True)
-        print(f"❌ Send test materials error for {event_name}: {e}")
-        import traceback
-        traceback.print_exc()
+            await interaction.followup.send(f"❌ Error sending test materials for {event_name}: {str(e)}", ephemeral=True)
+            print(f"❌ Send test materials error for {event_name}: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 @bot.tree.command(name="dummy2", description="Dummy 2 (Admin only)")
@@ -5128,379 +5139,376 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
 async def role_reset_command(interaction: discord.Interaction):
     """Reset the roles and nicknames"""
 
-    setup_done = 0
-    priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
-
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
-
-    # Defer immediately since this will take time
-    await interaction.response.defer(ephemeral=True)
     
-    try:
-        guild = interaction.guild
-        # Fetch all rows from this guild's sheet
-        guild_id = guild.id
+    async with admin_lock:
+        priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
 
-        print(f"🔍 DEBUG: Testing sheet access by reading data...")
-        try:
-            test_data = sheets[guild_id].get_all_records()
-            print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
-        except Exception as e:
-            print(f"❌ DEBUG: Error reading sheet data: {e}")
-            print(f"❌ DEBUG: Error type: {type(e)}")
-            print(f"❌ DEBUG: Error details: {str(e)}")
-            raise e
-    
-        # parsing the sheet to get all the building and chapter roles
-        if guild:
-            # Extract all unique building/event combinations from the sheet
-            building_structures = set()
-            event_building_combos = set()
-            chapters = set()
-            for row in test_data:
-                building = str(row.get("Building 1", "")).strip()
-                first_event = str(row.get("First Event", "")).strip()
-                room = str(row.get("Room 1", "")).strip()
-                chapter = str(row.get("Chapter", "")).strip()
-                if building and first_event:
-                    # Use a tuple to track unique combinations
-                    event_building_combos.add(building)
-                    event_building_combos.add(first_event)
-                    event_building_combos.add(room)
-                    building_structures.add((building, first_event, room))
-                # Add chapters (including Unaffiliated for blank/N/A)
-                if chapter and chapter.lower() not in ["n/a", "na", ""]:
-                    chapters.add(chapter)
-                else:
-                    chapters.add("Unaffiliated")
-            print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
-            print(f"📖 Found {len(chapters)} unique chapters to create")
-        else:
-            print("⚠️ Could not get guild for structure creation")
-        
-    except Exception as e:
-        print(f"❌ DEBUG: Error parsing sheet for build/rooms and chapter: {e}")
-        raise e
-    
-    print(f"🔄 Starting role reset for {guild.name} requested by {interaction.user}")
+        # Defer immediately since this will take time
+        await interaction.response.defer(ephemeral=True)
 
-    # Counters
-    nickname_count = 0
-    role_count = 0
-    role_id = {}
-
-    current_roles = {role.name for role in guild.roles}
-    for role in guild.roles:
-        role_id[role.name] = role.id
-    new_roles = set(priority_roles + list(event_building_combos) + list(chapters))
-    common_roles = current_roles & new_roles
-    delete_roles = common_roles ^ current_roles
-
-    print(f"🔄 DEBUG: current_roles = {current_roles}")
-    print(f"🔄 DEBUG: new_roles = {new_roles}")
-    print(f"🔄 DEBUG: common_roles = {common_roles}")
-    print(f"🔄 DEBUG: delete_roles = {delete_roles}")
-
-    try:
-        # Delete custom roles (keep @everyone and bot roles)
-        print("🗑️ Deleting custom roles...")
-        for role_str in delete_roles:
-            role = guild.get_role(role_id[role_str])
-            # Skip @everyone, bot roles, and roles higher than bot's highest role
-            if (role.name != "@everyone" and
-                not role.managed and
-                role < guild.me.top_role):
-                try:
-                    await safe_call(role.delete(reason=f"Role reset by {interaction.user}"))
-                    role_count += 1
-                    print(f"🗑️ Deleted role: {role.name}")
-                except discord.Forbidden:
-                    print(f"❌ No permission to delete role {role.name}")
-                except Exception as e:
-                    print(f"⚠️ Error deleting role {role.name}: {e}")
-
-        # Pre-create all building structures and channels from the sheet data
-        print("🏗️ Pre-creating all building structures and channels...")
-        try:
-            # Create all building structures upfront
-            for building, first_event, room in building_structures:
-                print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
-                await setup_building_structure(guild, building, first_event, room)
-            # Create all chapter structures upfront
-            for chapter in chapters:
-                print(f"📖 Pre-creating chapter: {chapter}")
-                await setup_chapter_structure(guild, chapter)
-            # Sort chapter channels alphabetically
-            print("📖 Organizing chapter channels alphabetically...")
-            await sort_chapter_channels_alphabetically(guild)
-            # Sort categories once after all structures are created
-            print("📋 Organizing all building categories alphabetically...")
-            await sort_building_categories_alphabetically(guild)
-        except Exception as structure_error:
-            print(f"⚠️ Error creating building structures: {structure_error}")
-            # Don't fail the whole command if structure creation fails
-
-
-        # Reset all member nicknames
-        print("📝 Resetting all member nicknames...")
-        for member in guild.members:
-            if member.nick and not member.bot:
-                try:
-                    await handle_rate_limit(
-                        member.edit(nick=None, reason=f"Role reset by {interaction.user}"),
-                        f"resetting nickname for {member}"
-                    )
-                    nickname_count += 1
-                    print(f"📝 Reset nickname for {member.display_name}")
-                except discord.Forbidden:
-                    print(f"❌ No permission to reset nickname for {member.display_name}")
-                except Exception as e:
-                    print(f"⚠️ Error resetting nickname for {member.display_name}: {e}")
-        print(f"✅ Reset {nickname_count} nicknames")
-   
-        # Check if ezhang. is already in this server and give them the :( role
-        await setup_ezhang_admin_role(guild)
-
-        # Trigger an immediate sync after successful connection and structure creation
-        print("🔄 Triggering immediate sync after template connection...")
-        sync_results = None
         try:
             guild = interaction.guild
-            if guild:
-                sync_results = await perform_member_sync(guild, test_data)
-                print(f"✅ Initial sync complete: {sync_results['processed']} processed, {sync_results['invited']} invited, {sync_results['role_assignments']} roles assigned")
-            else:
-                print("⚠️ Could not get guild for immediate sync")
-        except Exception as sync_error:
-            print(f"⚠️ Error during immediate sync: {sync_error}")
-            # Don't fail the whole command if sync fails
-            ############
+            # Fetch all rows from this guild's sheet
+            guild_id = guild.id
 
-        result_embed = discord.Embed(
-            title="✅ Role Reset Complete",
-            description="The server has completely reset roles and assignments!",
-            color=discord.Color.green()
-        )
-        result_embed.add_field(name="Nicknames Reset", value=str(nickname_count), inline=True)
-        result_embed.add_field(name="Roles Deleted", value=str(role_count), inline=True)
-        result_embed.set_footer(text="🏗️ Roles and nicknames have been refreshed!")
-
-        # Try to send to user via DM first
-        sent_dm = False
-        try:
-            await interaction.user.send(embed=result_embed)
-            print(f"✅ Sent completion message to {interaction.user} via DM")
-            await interaction.followup.send(embed=result_embed, ephemeral=True)
-            print(f"✅ Successfully reset roles")
-            sent_dm = True
-        except:
-            print(f"⚠️ Could not send completion message to {interaction.user} via DM")
-
-        print(f"📊 Summary:")
-        print(f"   • {nickname_count} nicknames reset")
-        print(f"   • {role_count} roles deleted")
-
-    except Exception as e:
-        error_msg = f"❌ Error during role reset: {str(e)}"
-        try:
-            await interaction.followup.send(error_msg)
-        except:
-            # If followup fails, try to DM the user
+            print(f"🔍 DEBUG: Testing sheet access by reading data...")
             try:
-                await interaction.user.send(error_msg)
-            except:
-                print(error_msg)
-        print(f"❌ Role reset error: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    setup_done = 1
+                test_data = sheets[guild_id].get_all_records()
+                print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
+            except Exception as e:
+                print(f"❌ DEBUG: Error reading sheet data: {e}")
+                print(f"❌ DEBUG: Error type: {type(e)}")
+                print(f"❌ DEBUG: Error details: {str(e)}")
+                raise e
 
+            # parsing the sheet to get all the building and chapter roles
+            if guild:
+                # Extract all unique building/event combinations from the sheet
+                building_structures = set()
+                event_building_combos = set()
+                chapters = set()
+                for row in test_data:
+                    building = str(row.get("Building 1", "")).strip()
+                    first_event = str(row.get("First Event", "")).strip()
+                    room = str(row.get("Room 1", "")).strip()
+                    chapter = str(row.get("Chapter", "")).strip()
+                    if building and first_event:
+                        # Use a tuple to track unique combinations
+                        event_building_combos.add(building)
+                        event_building_combos.add(first_event)
+                        event_building_combos.add(room)
+                        building_structures.add((building, first_event, room))
+                    # Add chapters (including Unaffiliated for blank/N/A)
+                    if chapter and chapter.lower() not in ["n/a", "na", ""]:
+                        chapters.add(chapter)
+                    else:
+                        chapters.add("Unaffiliated")
+                print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
+                print(f"📖 Found {len(chapters)} unique chapters to create")
+            else:
+                print("⚠️ Could not get guild for structure creation")
+
+        except Exception as e:
+            print(f"❌ DEBUG: Error parsing sheet for build/rooms and chapter: {e}")
+            raise e
+
+        print(f"🔄 Starting role reset for {guild.name} requested by {interaction.user}")
+
+        # Counters
+        nickname_count = 0
+        role_count = 0
+        role_id = {}
+
+        current_roles = {role.name for role in guild.roles}
+        for role in guild.roles:
+            role_id[role.name] = role.id
+        new_roles = set(priority_roles + list(event_building_combos) + list(chapters))
+        common_roles = current_roles & new_roles
+        delete_roles = common_roles ^ current_roles
+
+        print(f"🔄 DEBUG: current_roles = {current_roles}")
+        print(f"🔄 DEBUG: new_roles = {new_roles}")
+        print(f"🔄 DEBUG: common_roles = {common_roles}")
+        print(f"🔄 DEBUG: delete_roles = {delete_roles}")
+
+        try:
+            # Delete custom roles (keep @everyone and bot roles)
+            print("🗑️ Deleting custom roles...")
+            for role_str in delete_roles:
+                role = guild.get_role(role_id[role_str])
+                # Skip @everyone, bot roles, and roles higher than bot's highest role
+                if (role.name != "@everyone" and
+                    not role.managed and
+                    role < guild.me.top_role):
+                    try:
+                        await safe_call(role.delete(reason=f"Role reset by {interaction.user}"))
+                        role_count += 1
+                        print(f"🗑️ Deleted role: {role.name}")
+                    except discord.Forbidden:
+                        print(f"❌ No permission to delete role {role.name}")
+                    except Exception as e:
+                        print(f"⚠️ Error deleting role {role.name}: {e}")
+
+            # Pre-create all building structures and channels from the sheet data
+            print("🏗️ Pre-creating all building structures and channels...")
+            try:
+                # Create all building structures upfront
+                for building, first_event, room in building_structures:
+                    print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
+                    await setup_building_structure(guild, building, first_event, room)
+                # Create all chapter structures upfront
+                for chapter in chapters:
+                    print(f"📖 Pre-creating chapter: {chapter}")
+                    await setup_chapter_structure(guild, chapter)
+                # Sort chapter channels alphabetically
+                print("📖 Organizing chapter channels alphabetically...")
+                await sort_chapter_channels_alphabetically(guild)
+                # Sort categories once after all structures are created
+                print("📋 Organizing all building categories alphabetically...")
+                await sort_building_categories_alphabetically(guild)
+            except Exception as structure_error:
+                print(f"⚠️ Error creating building structures: {structure_error}")
+                # Don't fail the whole command if structure creation fails
+
+
+            # Reset all member nicknames
+            print("📝 Resetting all member nicknames...")
+            for member in guild.members:
+                if member.nick and not member.bot:
+                    try:
+                        await handle_rate_limit(
+                            member.edit(nick=None, reason=f"Role reset by {interaction.user}"),
+                            f"resetting nickname for {member}"
+                        )
+                        nickname_count += 1
+                        print(f"📝 Reset nickname for {member.display_name}")
+                    except discord.Forbidden:
+                        print(f"❌ No permission to reset nickname for {member.display_name}")
+                    except Exception as e:
+                        print(f"⚠️ Error resetting nickname for {member.display_name}: {e}")
+            print(f"✅ Reset {nickname_count} nicknames")
+    
+            # Check if ezhang. is already in this server and give them the :( role
+            await setup_ezhang_admin_role(guild)
+
+            # Trigger an immediate sync after successful connection and structure creation
+            print("🔄 Triggering immediate sync after template connection...")
+            sync_results = None
+            try:
+                guild = interaction.guild
+                if guild:
+                    sync_results = await perform_member_sync(guild, test_data)
+                    print(f"✅ Initial sync complete: {sync_results['processed']} processed, {sync_results['invited']} invited, {sync_results['role_assignments']} roles assigned")
+                else:
+                    print("⚠️ Could not get guild for immediate sync")
+            except Exception as sync_error:
+                print(f"⚠️ Error during immediate sync: {sync_error}")
+                # Don't fail the whole command if sync fails
+                ############
+
+            result_embed = discord.Embed(
+                title="✅ Role Reset Complete",
+                description="The server has completely reset roles and assignments!",
+                color=discord.Color.green()
+            )
+            result_embed.add_field(name="Nicknames Reset", value=str(nickname_count), inline=True)
+            result_embed.add_field(name="Roles Deleted", value=str(role_count), inline=True)
+            result_embed.set_footer(text="🏗️ Roles and nicknames have been refreshed!")
+
+            # Try to send to user via DM first
+            sent_dm = False
+            try:
+                await interaction.user.send(embed=result_embed)
+                print(f"✅ Sent completion message to {interaction.user} via DM")
+                await interaction.followup.send(embed=result_embed, ephemeral=True)
+                print(f"✅ Successfully reset roles")
+                sent_dm = True
+            except:
+                print(f"⚠️ Could not send completion message to {interaction.user} via DM")
+
+            print(f"📊 Summary:")
+            print(f"   • {nickname_count} nicknames reset")
+            print(f"   • {role_count} roles deleted")
+
+        except Exception as e:
+            error_msg = f"❌ Error during role reset: {str(e)}"
+            try:
+                await interaction.followup.send(error_msg)
+            except:
+                # If followup fails, try to DM the user
+                try:
+                    await interaction.user.send(error_msg)
+                except:
+                    print(error_msg)
+            print(f"❌ Role reset error: {e}")
+            import traceback
+            traceback.print_exc()
 
 @bot.tree.command(name="resetserver", description="⚠️ DANGER: Completely reset the server - deletes channels, roles, categories (Admin only)")
 async def reset_server_command(interaction: discord.Interaction):
     """⚠️ DANGER: Completely reset the server by deleting all channels, categories, roles, and nicknames"""
 
-    setup_done = 0
-
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
     
-    # Defer immediately since this will take time
-    await interaction.response.defer(ephemeral=True)
+    async with admin_lock:
+        
+        # Defer immediately since this will take time
+        await interaction.response.defer(ephemeral=True)
 
-    try:
-        guild = interaction.guild
-        print(f"🔄 Starting complete server reset for {guild.name} requested by {interaction.user}")
+        try:
+            guild = interaction.guild
+            print(f"🔄 Starting complete server reset for {guild.name} requested by {interaction.user}")
 
-        # Initial warning
-        warning_embed = discord.Embed(
-            title="⚠️ ⚠️ ⚠️ SERVER RESET STARTING ⚠️ ⚠️ ⚠️",
-            description="This will **DELETE EVERYTHING**:\n• All channels\n• All categories\n• All roles\n• All nicknames\n\n**This action is IRREVERSIBLE!**\n\nStarting in 5 seconds...",
-            color=discord.Color.red()
-        )
-        await interaction.followup.send(embed=warning_embed)
-        await asyncio.sleep(5)
+            # Initial warning
+            warning_embed = discord.Embed(
+                title="⚠️ ⚠️ ⚠️ SERVER RESET STARTING ⚠️ ⚠️ ⚠️",
+                description="This will **DELETE EVERYTHING**:\n• All channels\n• All categories\n• All roles\n• All nicknames\n\n**This action is IRREVERSIBLE!**\n\nStarting in 5 seconds...",
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=warning_embed)
+            await asyncio.sleep(5)
 
-        # Counters
-        nickname_count = 0
-        channel_count = 0
-        voice_count = 0
-        forum_count = 0
-        category_count = 0
-        role_count = 0
+            # Counters
+            nickname_count = 0
+            channel_count = 0
+            voice_count = 0
+            forum_count = 0
+            category_count = 0
+            role_count = 0
 
-        # Reset all member nicknames
-        print("📝 Resetting all member nicknames...")
-        for member in guild.members:
-            if member.nick and not member.bot:
-                try:
-                    await handle_rate_limit(
-                        member.edit(nick=None, reason=f"Server reset by {interaction.user}"),
-                        f"resetting nickname for {member}"
-                    )
-                    nickname_count += 1
-                    print(f"📝 Reset nickname for {member.display_name}")
-                except discord.Forbidden:
-                    print(f"❌ No permission to reset nickname for {member.display_name}")
-                except Exception as e:
-                    print(f"⚠️ Error resetting nickname for {member.display_name}: {e}")
-        print(f"✅ Reset {nickname_count} nicknames")
+            # Reset all member nicknames
+            print("📝 Resetting all member nicknames...")
+            for member in guild.members:
+                if member.nick and not member.bot:
+                    try:
+                        await handle_rate_limit(
+                            member.edit(nick=None, reason=f"Server reset by {interaction.user}"),
+                            f"resetting nickname for {member}"
+                        )
+                        nickname_count += 1
+                        print(f"📝 Reset nickname for {member.display_name}")
+                    except discord.Forbidden:
+                        print(f"❌ No permission to reset nickname for {member.display_name}")
+                    except Exception as e:
+                        print(f"⚠️ Error resetting nickname for {member.display_name}: {e}")
+            print(f"✅ Reset {nickname_count} nicknames")
 
-        # Delete all text channels
-        print("🗑️ Deleting all text channels...")
-        for channel in guild.text_channels:
-            try:
-                await safe_call(channel.delete(reason=f"Server reset by {interaction.user}"))
-                channel_count += 1
-                print(f"🗑️ Deleted text channel: #{channel.name}")
-            except discord.Forbidden:
-                print(f"❌ No permission to delete channel #{channel.name}")
-            except Exception as e:
-                print(f"⚠️ Error deleting channel #{channel.name}: {e}")
-
-        # Delete all voice channels
-        print("🗑️ Deleting all voice channels...")
-        for channel in guild.voice_channels:
-            try:
-                await safe_call(channel.delete(reason=f"Server reset by {interaction.user}"))
-                voice_count += 1
-                print(f"🗑️ Deleted voice channel: {channel.name}")
-            except discord.Forbidden:
-                print(f"❌ No permission to delete voice channel {channel.name}")
-            except Exception as e:
-                print(f"⚠️ Error deleting voice channel {channel.name}: {e}")
-
-        # Delete all forum channels
-        print("🗑️ Deleting all forum channels...")
-        for channel in guild.channels:
-            if hasattr(channel, 'type') and channel.type == discord.ChannelType.forum:
+            # Delete all text channels
+            print("🗑️ Deleting all text channels...")
+            for channel in guild.text_channels:
                 try:
                     await safe_call(channel.delete(reason=f"Server reset by {interaction.user}"))
-                    forum_count += 1
-                    print(f"🗑️ Deleted forum channel: #{channel.name}")
+                    channel_count += 1
+                    print(f"🗑️ Deleted text channel: #{channel.name}")
                 except discord.Forbidden:
-                    print(f"❌ No permission to delete forum #{channel.name}")
+                    print(f"❌ No permission to delete channel #{channel.name}")
                 except Exception as e:
-                    print(f"⚠️ Error deleting forum #{channel.name}: {e}")
+                    print(f"⚠️ Error deleting channel #{channel.name}: {e}")
 
-        # Delete all categories
-        print("🗑️ Deleting all categories...")
-        for category in guild.categories:
-            try:
-                await safe_call(category.delete(reason=f"Server reset by {interaction.user}"))
-                category_count += 1
-                print(f"🗑️ Deleted category: {category.name}")
-            except discord.Forbidden:
-                print(f"❌ No permission to delete category {category.name}")
-            except Exception as e:
-                print(f"⚠️ Error deleting category {category.name}: {e}")
-
-        # Delete all custom roles (keep @everyone and bot roles)
-        print("🗑️ Deleting all custom roles...")
-        for role in guild.roles:
-            # Skip @everyone, bot roles, and roles higher than bot's highest role
-            if (role.name != "@everyone" and
-                not role.managed and
-                role < guild.me.top_role):
+            # Delete all voice channels
+            print("🗑️ Deleting all voice channels...")
+            for channel in guild.voice_channels:
                 try:
-                    await safe_call(role.delete(reason=f"Server reset by {interaction.user}"))
-                    role_count += 1
-                    print(f"🗑️ Deleted role: {role.name}")
+                    await safe_call(channel.delete(reason=f"Server reset by {interaction.user}"))
+                    voice_count += 1
+                    print(f"🗑️ Deleted voice channel: {channel.name}")
                 except discord.Forbidden:
-                    print(f"❌ No permission to delete role {role.name}")
+                    print(f"❌ No permission to delete voice channel {channel.name}")
                 except Exception as e:
-                    print(f"⚠️ Error deleting role {role.name}: {e}")
+                    print(f"⚠️ Error deleting voice channel {channel.name}: {e}")
 
-        # Set up static channels after everything is deleted
-        print("🏗️ Setting up static channels...")
-        welcome_channel = None
-        try:
-            await setup_static_channels_for_guild(guild)
-            # Get the welcome channel that was just created
-            welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
-            print(f"✅ Static channels setup complete")
-        except Exception as e:
-            print(f"⚠️ Error setting up static channels: {e}")
+            # Delete all forum channels
+            print("🗑️ Deleting all forum channels...")
+            for channel in guild.channels:
+                if hasattr(channel, 'type') and channel.type == discord.ChannelType.forum:
+                    try:
+                        await safe_call(channel.delete(reason=f"Server reset by {interaction.user}"))
+                        forum_count += 1
+                        print(f"🗑️ Deleted forum channel: #{channel.name}")
+                    except discord.Forbidden:
+                        print(f"❌ No permission to delete forum #{channel.name}")
+                    except Exception as e:
+                        print(f"⚠️ Error deleting forum #{channel.name}: {e}")
 
-        # Send completion message
-        print("🧨 SERVER RESET COMPLETE!")
-        result_embed = discord.Embed(
-            title="✅ Server Reset Complete",
-            description="The server has been completely reset!",
-            color=discord.Color.green()
-        )
-        result_embed.add_field(name="Nicknames Reset", value=str(nickname_count), inline=True)
-        result_embed.add_field(name="Text Channels Deleted", value=str(channel_count), inline=True)
-        result_embed.add_field(name="Voice Channels Deleted", value=str(voice_count), inline=True)
-        result_embed.add_field(name="Forum Channels Deleted", value=str(forum_count), inline=True)
-        result_embed.add_field(name="Categories Deleted", value=str(category_count), inline=True)
-        result_embed.add_field(name="Roles Deleted", value=str(role_count), inline=True)
-        result_embed.set_footer(text="🏗️ Server is now completely clean and ready for fresh setup!")
+            # Delete all categories
+            print("🗑️ Deleting all categories...")
+            for category in guild.categories:
+                try:
+                    await safe_call(category.delete(reason=f"Server reset by {interaction.user}"))
+                    category_count += 1
+                    print(f"🗑️ Deleted category: {category.name}")
+                except discord.Forbidden:
+                    print(f"❌ No permission to delete category {category.name}")
+                except Exception as e:
+                    print(f"⚠️ Error deleting category {category.name}: {e}")
 
-        # Try to send to user via DM first
-        sent_dm = False
-        try:
-            await interaction.user.send(embed=result_embed)
-            print(f"✅ Sent completion message to {interaction.user} via DM")
-            sent_dm = True
-        except:
-            print(f"⚠️ Could not send completion message to {interaction.user} via DM")
+            # Delete all custom roles (keep @everyone and bot roles)
+            print("🗑️ Deleting all custom roles...")
+            for role in guild.roles:
+                # Skip @everyone, bot roles, and roles higher than bot's highest role
+                if (role.name != "@everyone" and
+                    not role.managed and
+                    role < guild.me.top_role):
+                    try:
+                        await safe_call(role.delete(reason=f"Server reset by {interaction.user}"))
+                        role_count += 1
+                        print(f"🗑️ Deleted role: {role.name}")
+                    except discord.Forbidden:
+                        print(f"❌ No permission to delete role {role.name}")
+                    except Exception as e:
+                        print(f"⚠️ Error deleting role {role.name}: {e}")
 
-        # If DM failed and we created a welcome channel, send there
-        if not sent_dm and welcome_channel:
+            # Set up static channels after everything is deleted
+            print("🏗️ Setting up static channels...")
+            welcome_channel = None
             try:
-                await welcome_channel.send(f"{interaction.user.mention}", embed=result_embed)
-                print(f"✅ Sent completion message to #{welcome_channel.name}")
+                await setup_static_channels_for_guild(guild)
+                # Get the welcome channel that was just created
+                welcome_channel = discord.utils.get(guild.text_channels, name="welcome")
+                print(f"✅ Static channels setup complete")
             except Exception as e:
-                print(f"⚠️ Could not send completion message to welcome channel: {e}")
+                print(f"⚠️ Error setting up static channels: {e}")
 
-        print(f"📊 Summary:")
-        print(f"   • {nickname_count} nicknames reset")
-        print(f"   • {channel_count} text channels deleted")
-        print(f"   • {voice_count} voice channels deleted")
-        print(f"   • {forum_count} forum channels deleted")
-        print(f"   • {category_count} categories deleted")
-        print(f"   • {role_count} roles deleted")
+            # Send completion message
+            print("🧨 SERVER RESET COMPLETE!")
+            result_embed = discord.Embed(
+                title="✅ Server Reset Complete",
+                description="The server has been completely reset!",
+                color=discord.Color.green()
+            )
+            result_embed.add_field(name="Nicknames Reset", value=str(nickname_count), inline=True)
+            result_embed.add_field(name="Text Channels Deleted", value=str(channel_count), inline=True)
+            result_embed.add_field(name="Voice Channels Deleted", value=str(voice_count), inline=True)
+            result_embed.add_field(name="Forum Channels Deleted", value=str(forum_count), inline=True)
+            result_embed.add_field(name="Categories Deleted", value=str(category_count), inline=True)
+            result_embed.add_field(name="Roles Deleted", value=str(role_count), inline=True)
+            result_embed.set_footer(text="🏗️ Server is now completely clean and ready for fresh setup!")
 
-    except Exception as e:
-        error_msg = f"❌ Error during server reset: {str(e)}"
-        try:
-            await interaction.followup.send(error_msg)
-        except:
-            # If followup fails, try to DM the user
+            # Try to send to user via DM first
+            sent_dm = False
             try:
-                await interaction.user.send(error_msg)
+                await interaction.user.send(embed=result_embed)
+                print(f"✅ Sent completion message to {interaction.user} via DM")
+                sent_dm = True
             except:
-                print(error_msg)
-        print(f"❌ Server reset error: {e}")
-        import traceback
-        traceback.print_exc()
+                print(f"⚠️ Could not send completion message to {interaction.user} via DM")
+
+            # If DM failed and we created a welcome channel, send there
+            if not sent_dm and welcome_channel:
+                try:
+                    await welcome_channel.send(f"{interaction.user.mention}", embed=result_embed)
+                    print(f"✅ Sent completion message to #{welcome_channel.name}")
+                except Exception as e:
+                    print(f"⚠️ Could not send completion message to welcome channel: {e}")
+
+            print(f"📊 Summary:")
+            print(f"   • {nickname_count} nicknames reset")
+            print(f"   • {channel_count} text channels deleted")
+            print(f"   • {voice_count} voice channels deleted")
+            print(f"   • {forum_count} forum channels deleted")
+            print(f"   • {category_count} categories deleted")
+            print(f"   • {role_count} roles deleted")
+
+        except Exception as e:
+            error_msg = f"❌ Error during server reset: {str(e)}"
+            try:
+                await interaction.followup.send(error_msg)
+            except:
+                # If followup fails, try to DM the user
+                try:
+                    await interaction.user.send(error_msg)
+                except:
+                    print(error_msg)
+            print(f"❌ Server reset error: {e}")
+            import traceback
+            traceback.print_exc()
 
 if __name__ == "__main__":
     # Start a simple HTTP health check server for Fly.io
