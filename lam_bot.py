@@ -5189,7 +5189,7 @@ async def role_reset_command(interaction: discord.Interaction):
     nickname_count = 0
     role_count = 0
 
-    current_roles = set(guild.roles)
+    current_roles = {role.name for role in guild.roles}
     new_roles = set(priority_roles + list(building_structures) + list(chapters))
     common_roles = current_roles & new_roles
     delete_roles = common_roles ^ current_roles
@@ -5287,6 +5287,8 @@ async def role_reset_command(interaction: discord.Interaction):
         try:
             await interaction.user.send(embed=result_embed)
             print(f"✅ Sent completion message to {interaction.user} via DM")
+            await interaction.followup.send(embed=result_embed, ephemeral=True)
+            print(f"✅ Successfully reset roles")
             sent_dm = True
         except:
             print(f"⚠️ Could not send completion message to {interaction.user} via DM")
