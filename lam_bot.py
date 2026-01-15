@@ -5128,6 +5128,7 @@ async def role_reset_command(interaction: discord.Interaction):
     """Reset the roles and nicknames"""
 
     setup_done = 0
+    priority_roles = [":(", "Volunteer", "Lead Event Supervisor", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
 
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
@@ -5137,13 +5138,104 @@ async def role_reset_command(interaction: discord.Interaction):
     # Defer immediately since this will take time
     await interaction.response.defer(ephemeral=True)
 
+    print(f"🔍 DEBUG: Testing sheet access by reading data...")
+    try:
+        test_data = sheets[guild_id].get_all_records()
+        print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
+    except Exception as e:
+        print(f"❌ DEBUG: Error reading sheet data: {e}")
+        print(f"❌ DEBUG: Error type: {type(e)}")
+        print(f"❌ DEBUG: Error details: {str(e)}")
+        raise e
+    
     try:
         guild = interaction.guild
-        print(f"🔄 Starting role reset for {guild.name} requested by {interaction.user}")
+        # Fetch all rows from this guild's sheet
+        guild_id = guild.id
 
-        # Counters
-        nickname_count = 0
-        role_count = 0
+        # parsing the sheet to get all the building and chapter roles
+        if guild:
+            # Extract all unique building/event combinations from the sheet
+            building_structures = set()
+            chapters = set()
+            for row in test_data:
+                building = str(row.get("Building 1", "")).strip()
+                first_event = str(row.get("First Event", "")).strip()
+                room = str(row.get("Room 1", "")).strip()
+                chapter = str(row.get("Chapter", "")).strip()
+                if building and first_event:
+                    # Use a tuple to track unique combinations
+                    building_structures.add(building)
+                    building_structures.add(first_event)
+                    building_structures.add(room)
+                # Add chapters (including Unaffiliated for blank/N/A)
+                if chapter and chapter.lower() not in ["n/a", "na", ""]:
+                    chapters.add(chapter)
+                else:
+                    chapters.add("Unaffiliated")
+            print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
+            print(f"📖 Found {len(chapters)} unique chapters to create")
+        else:
+            print("⚠️ Could not get guild for structure creation")
+        
+    except Exception as e:
+        print(f"❌ DEBUG: Error parsing sheet for build/rooms and chapter: {e}")
+        raise e
+        
+    print(f"🔄 Starting role reset for {guild.name} requested by {interaction.user}")
+
+    # Counters
+    nickname_count = 0
+    role_count = 0
+
+    current_roles = set(guild.roles)
+    new_roles = set(priority_roles + list(building_structures) + list(chapters))
+    common_roles = current_roles & new_roles
+    delete_roles = common_roles ^ current_roles
+
+    print(f"🔄 DEBUG: current_roles = {current_roles}")
+    print(f"🔄 DEBUG: new_roles = {new_roles}")
+    print(f"🔄 DEBUG: common_roles = {common_roles}")
+    print(f"🔄 DEBUG: delete_roles = {delete_roles}")
+
+    try:
+        # Delete custom roles (keep @everyone and bot roles)
+        print("🗑️ Deleting custom roles...")
+        for role in delete_roles:
+            # Skip @everyone, bot roles, and roles higher than bot's highest role
+            if (role.name != "@everyone" and
+                not role.managed and
+                role < guild.me.top_role):
+                try:
+                    await safe_call(role.delete(reason=f"Role reset by {interaction.user}"))
+                    role_count += 1
+                    print(f"🗑️ Deleted role: {role.name}")
+                except discord.Forbidden:
+                    print(f"❌ No permission to delete role {role.name}")
+                except Exception as e:
+                    print(f"⚠️ Error deleting role {role.name}: {e}")
+
+        # Pre-create all building structures and channels from the sheet data
+        print("🏗️ Pre-creating all building structures and channels...")
+        try:
+            # Create all building structures upfront
+            for building, first_event, room in building_structures:
+                print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
+                await setup_building_structure(guild, building, first_event, room)
+            # Create all chapter structures upfront
+            for chapter in chapters:
+                print(f"📖 Pre-creating chapter: {chapter}")
+                await setup_chapter_structure(guild, chapter)
+            # Sort chapter channels alphabetically
+            print("📖 Organizing chapter channels alphabetically...")
+            await sort_chapter_channels_alphabetically(guild)
+            # Sort categories once after all structures are created
+            print("📋 Organizing all building categories alphabetically...")
+            await sort_building_categories_alphabetically(guild)
+        except Exception as structure_error:
+            print(f"⚠️ Error creating building structures: {structure_error}")
+            # Don't fail the whole command if structure creation fails
+
 
         # Reset all member nicknames
         print("📝 Resetting all member nicknames...")
@@ -5161,81 +5253,7 @@ async def role_reset_command(interaction: discord.Interaction):
                 except Exception as e:
                     print(f"⚠️ Error resetting nickname for {member.display_name}: {e}")
         print(f"✅ Reset {nickname_count} nicknames")
-
-        # Delete all custom roles (keep @everyone and bot roles)
-        print("🗑️ Deleting all custom roles...")
-        for role in guild.roles:
-            # Skip @everyone, bot roles, and roles higher than bot's highest role
-            if (role.name != "@everyone" and
-                not role.managed and
-                role < guild.me.top_role):
-                try:
-                    await safe_call(role.delete(reason=f"Role reset by {interaction.user}"))
-                    role_count += 1
-                    print(f"🗑️ Deleted role: {role.name}")
-                except discord.Forbidden:
-                    print(f"❌ No permission to delete role {role.name}")
-                except Exception as e:
-                    print(f"⚠️ Error deleting role {role.name}: {e}")
-
-        # Fetch all rows from this guild's sheet
-        data = sheets[guild.id].get_all_records()
-        guild_id = guild.id
-        ##############
-        # Test access by getting sheet info
-        print(f"🔍 DEBUG: Testing sheet access by reading data...")
-        try:
-            test_data = sheets[guild_id].get_all_records()
-            print(f"✅ DEBUG: Successfully read {len(test_data)} rows from sheet")
-        except Exception as e:
-            print(f"❌ DEBUG: Error reading sheet data: {e}")
-            print(f"❌ DEBUG: Error type: {type(e)}")
-            print(f"❌ DEBUG: Error details: {str(e)}")
-            raise e
-        # Pre-create all building structures and channels from the sheet data
-        print("🏗️ Pre-creating all building structures and channels...")
-        try:
-            guild = interaction.guild
-            if guild:
-                # Extract all unique building/event combinations from the sheet
-                building_structures = set()
-                chapters = set()
-                for row in test_data:
-                    building = str(row.get("Building 1", "")).strip()
-                    first_event = str(row.get("First Event", "")).strip()
-                    room = str(row.get("Room 1", "")).strip()
-                    chapter = str(row.get("Chapter", "")).strip()
-                    if building and first_event:
-                        # Use a tuple to track unique combinations
-                        building_structures.add((building, first_event, room))
-                    # Add chapters (including Unaffiliated for blank/N/A)
-                    if chapter and chapter.lower() not in ["n/a", "na", ""]:
-                        chapters.add(chapter)
-                    else:
-                        chapters.add("Unaffiliated")
-                print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
-                print(f"📖 Found {len(chapters)} unique chapters to create")
-                # Create all building structures upfront
-                for building, first_event, room in building_structures:
-                    print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
-                    await setup_building_structure(guild, building, first_event, room)
-                # Create all chapter structures upfront
-                for chapter in chapters:
-                    print(f"📖 Pre-creating chapter: {chapter}")
-                    await setup_chapter_structure(guild, chapter)
-                # Sort chapter channels alphabetically
-                print("📖 Organizing chapter channels alphabetically...")
-                await sort_chapter_channels_alphabetically(guild)
-                # Sort categories once after all structures are created
-                print("📋 Organizing all building categories alphabetically...")
-                await sort_building_categories_alphabetically(guild)
-                print(f"✅ Pre-created {len(building_structures)} building structures")
-            else:
-                print("⚠️ Could not get guild for structure creation")
-        except Exception as structure_error:
-            print(f"⚠️ Error creating building structures: {structure_error}")
-            # Don't fail the whole command if structure creation fails
-
+   
         # Check if ezhang. is already in this server and give them the :( role
         await setup_ezhang_admin_role(guild)
 
