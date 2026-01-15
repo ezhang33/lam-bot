@@ -73,7 +73,7 @@ rate_limit_lock = asyncio.Lock()
 async def safe_call(coro):
     async with rate_limit_lock:
         result = await coro
-        await asyncio.sleep(0.25)
+        await asyncio.sleep(0.5)
         return result
     
 def save_cache(data):
@@ -1920,88 +1920,90 @@ async def organize_role_hierarchy_for_guild(guild):
         moved_count = 0
         rate_limited_roles = []
 
-        #role_positions = {}
-        #for role in final_order:
-        #    role_positions[role] = position
-        #    position += 1
-        #await safe_call(guild.edit_role_positions(role_positions, reason="Organizing role hierarchy"))
-        #print(f"✅ Successfully moved all roles!")
-
-
+        role_positions = {}
         for role in final_order:
-            if role.position != position:
-                max_retries = 3
-                retry_count = 0
-                success = False
-        
-                while retry_count < max_retries and not success:
-                    try:
-                        await safe_call(role.edit(position=position, reason="Organizing role hierarchy"))
-                        print(f"📋 Moved '{role.name}' to position {position}")
-                        moved_count += 1
-                        success = True
-                        # Small delay to avoid rate limits (Discord allows ~50 requests/second, but be conservative)
-                        await asyncio.sleep(0.5)  # 100ms delay between role moves
-                    except discord.Forbidden:
-                        print(f"❌ No permission to move role '{role.name}' (may be higher than bot)")
-                        success = True  # Don't retry permission errors
-                    except discord.HTTPException as e:
-                        error_msg = str(e)
-                        # Check for rate limit errors
-                        if e.status == 429 or "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
-                            retry_count += 1
-                            if retry_count < max_retries:
-                                # Extract retry_after from response if available
-                                retry_after = 1.0  # Default 1 second
-                                if hasattr(e, 'retry_after') and e.retry_after:
-                                    retry_after = float(e.retry_after)
-                                elif isinstance(e.response, dict) and 'retry_after' in e.response:
-                                    retry_after = float(e.response['retry_after'])
-        
-                                print(f"⚠️ Rate limited moving role '{role.name}', waiting {retry_after}s before retry {retry_count}/{max_retries}...")
-                                await asyncio.sleep(retry_after)
-                            else:
-                                print(f"⚠️ Rate limited moving role '{role.name}' after {max_retries} retries, skipping...")
-                                rate_limited_roles.append(role.name)
-                                success = True  # Give up on this role
-                        elif e.code == 50013:
-                            print(f"❌ Missing permissions to move role '{role.name}'")
-                            success = True  # Don't retry permission errors
-                        else:
-                            print(f"⚠️ Error moving role '{role.name}': {e}")
-                            success = True  # Don't retry other errors
-                    except Exception as e:
-                        error_msg = str(e)
-                        if "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
-                            retry_count += 1
-                            if retry_count < max_retries:
-                                print(f"⚠️ Rate limited moving role '{role.name}', waiting 1s before retry {retry_count}/{max_retries}...")
-                                await asyncio.sleep(1.0)
-                            else:
-                                print(f"⚠️ Rate limited moving role '{role.name}' after {max_retries} retries, skipping...")
-                                rate_limited_roles.append(role.name)
-                                success = True
-                        else:
-                            print(f"⚠️ Unexpected error moving role '{role.name}': {e}")
-                            success = True
+            role_positions[role] = position
             position += 1
-        
-        if rate_limited_roles:
-            print(f"⚠️ Could not move {len(rate_limited_roles)} roles due to rate limits: {', '.join(rate_limited_roles)}")
-            print("💡 These roles will be organized on the next sync or when you run /organizeroles again")
-        
-        if moved_count > 0:
-            print(f"✅ Successfully moved {moved_count} roles!")
-            print(f"📋 Organized order (bottom to top): {' → '.join([r.name for r in final_order])}")
-        else:
-            print("ℹ️ No roles needed to be moved (already in correct positions)")
+        try:
+            await safe_call(guild.edit_role_positions(role_positions, reason="Organizing role hierarchy"))
+            print(f"✅ Successfully moved all roles!")
+        except Exception as e:
+            print(f"⚠️ Unexpected error moving roles: {e}")
+
+        #for role in final_order:
+        #    if role.position != position:
+        #        max_retries = 3
+        #        retry_count = 0
+        #        success = False
+        #
+        #        while retry_count < max_retries and not success:
+        #            try:
+        #                await safe_call(role.edit(position=position, reason="Organizing role hierarchy"))
+        #                print(f"📋 Moved '{role.name}' to position {position}")
+        #                moved_count += 1
+        #                success = True
+        #                # Small delay to avoid rate limits (Discord allows ~50 requests/second, but be conservative)
+        #                await asyncio.sleep(0.5)  # 100ms delay between role moves
+        #            except discord.Forbidden:
+        #                print(f"❌ No permission to move role '{role.name}' (may be higher than bot)")
+        #                success = True  # Don't retry permission errors
+        #            except discord.HTTPException as e:
+        #                error_msg = str(e)
+        #                # Check for rate limit errors
+        #                if e.status == 429 or "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+        #                    retry_count += 1
+        #                    if retry_count < max_retries:
+        #                        # Extract retry_after from response if available
+        #                        retry_after = 1.0  # Default 1 second
+        #                        if hasattr(e, 'retry_after') and e.retry_after:
+        #                            retry_after = float(e.retry_after)
+        #                        elif isinstance(e.response, dict) and 'retry_after' in e.response:
+        #                            retry_after = float(e.response['retry_after'])
+        #
+        #                        print(f"⚠️ Rate limited moving role '{role.name}', waiting {retry_after}s before retry {retry_count}/{max_retries}...")
+        #                        await asyncio.sleep(retry_after)
+        #                    else:
+        #                        print(f"⚠️ Rate limited moving role '{role.name}' after {max_retries} retries, skipping...")
+        #                        rate_limited_roles.append(role.name)
+        #                        success = True  # Give up on this role
+        #                elif e.code == 50013:
+        #                    print(f"❌ Missing permissions to move role '{role.name}'")
+        #                    success = True  # Don't retry permission errors
+        #                else:
+        #                    print(f"⚠️ Error moving role '{role.name}': {e}")
+        #                    success = True  # Don't retry other errors
+        #            except Exception as e:
+        #                error_msg = str(e)
+        #                if "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+        #                    retry_count += 1
+        #                    if retry_count < max_retries:
+        #                        print(f"⚠️ Rate limited moving role '{role.name}', waiting 1s before retry {retry_count}/{max_retries}...")
+        #                        await asyncio.sleep(1.0)
+        #                    else:
+        #                        print(f"⚠️ Rate limited moving role '{role.name}' after {max_retries} retries, skipping...")
+        #                        rate_limited_roles.append(role.name)
+        #                        success = True
+        #                else:
+        #                    print(f"⚠️ Unexpected error moving role '{role.name}': {e}")
+        #                    success = True
+        #    position += 1
+        #
+        #if rate_limited_roles:
+        #    print(f"⚠️ Could not move {len(rate_limited_roles)} roles due to rate limits: {', '.join(rate_limited_roles)}")
+        #    print("💡 These roles will be organized on the next sync or when you run /organizeroles again")
+        #
+        #if moved_count > 0:
+        #    print(f"✅ Successfully moved {moved_count} roles!")
+        #    print(f"📋 Organized order (bottom to top): {' → '.join([r.name for r in final_order])}")
+        #else:
+        #    print("ℹ️ No roles needed to be moved (already in correct positions)")
 
         # Final recommendation if there were permission issues
-        if unmovable_roles:
-            print("\n💡 To fix permission issues:")
-            print("1. Go to Server Settings → Roles")
-            print(f"2. Drag '{bot_role.name}' role to the TOP of the role list")
-            print("3. Run /organizeroles command again")
+        #if unmovable_roles:
+        #    print("\n💡 To fix permission issues:")
+        #    print("1. Go to Server Settings → Roles")
+        #    print(f"2. Drag '{bot_role.name}' role to the TOP of the role list")
+        #    print("3. Run /organizeroles command again")
 
     except Exception as e:
         print(f"❌ Error organizing role hierarchy: {e}")
