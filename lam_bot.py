@@ -3895,7 +3895,7 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
     """Login with email and password to get assigned roles"""
 
     if setup_done == 0:
-        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configuraiotn is done!", ephemeral=True)
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
     
     try:
