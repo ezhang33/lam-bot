@@ -2174,85 +2174,89 @@ async def setup_ezhang_admin_role(guild):
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    print(f"🌐 Bot is active in {len(bot.guilds)} guild(s):")
-    for guild in bot.guilds:
-        print(f"  • {guild.name} (ID: {guild.id}) - {guild.member_count} members")
+    async with admin_lock:
 
-    # Process each guild the bot is in
-    for guild in bot.guilds:
-        print(f"\n🏗️ Setting up guild: {guild.name} (ID: {guild.id})")
+        print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+        print(f"🌐 Bot is active in {len(bot.guilds)} guild(s):")
+        for guild in bot.guilds:
+            print(f"  • {guild.name} (ID: {guild.id}) - {guild.member_count} members")
 
-        # Check if server reset is enabled for this guild
-        if RESET_SERVER:
-            print(f"⚠️ ⚠️ ⚠️  SERVER RESET ENABLED FOR {guild.name}!  ⚠️ ⚠️ ⚠️")
-            await reset_server_for_guild(guild)
-            print(f"🔄 Reset complete for {guild.name}, continuing with setup...")
+        # Process each guild the bot is in
+        for guild in bot.guilds:
+            print(f"\n🏗️ Setting up guild: {guild.name} (ID: {guild.id})")
 
-        try:
-            print(f"🏗️ Setting up static channels for {guild.name}...")
-            await setup_static_channels_for_guild(guild)
-            print(f"🤖 Moving bot role to top for {guild.name}...")
-            await move_bot_role_to_top_for_guild(guild)
-            print(f"🎭 Organizing role hierarchy for {guild.name}...")
-            await organize_role_hierarchy_for_guild(guild)
-            print(f"🚫 Removing Runner access from building channels for {guild.name}...")
-            await remove_runner_access_from_building_channels_for_guild(guild)
-            print(f"🔑 Adding Runner access to static channels for {guild.name}...")
-            await give_runner_access_to_all_channels_for_guild(guild)
+            # Check if server reset is enabled for this guild
+            if RESET_SERVER:
+                print(f"⚠️ ⚠️ ⚠️  SERVER RESET ENABLED FOR {guild.name}!  ⚠️ ⚠️ ⚠️")
+                await reset_server_for_guild(guild)
+                print(f"🔄 Reset complete for {guild.name}, continuing with setup...")
 
-            # Check if ezhang. is already in this server and give them the :( role
-            await setup_ezhang_admin_role(guild)
+            try:
+                print(f"🏗️ Setting up static channels for {guild.name}...")
+                await setup_static_channels_for_guild(guild)
+                print(f"🤖 Moving bot role to top for {guild.name}...")
+                await move_bot_role_to_top_for_guild(guild)
+                print(f"🎭 Organizing role hierarchy for {guild.name}...")
+                await organize_role_hierarchy_for_guild(guild)
+                print(f"🚫 Removing Runner access from building channels for {guild.name}...")
+                await remove_runner_access_from_building_channels_for_guild(guild)
+                print(f"🔑 Adding Runner access to static channels for {guild.name}...")
+                await give_runner_access_to_all_channels_for_guild(guild)
 
-        except Exception as e:
-            print(f"❌ Error setting up guild {guild.name}: {e}")
+                # Check if ezhang. is already in this server and give them the :( role
+                await setup_ezhang_admin_role(guild)
 
-    # Try to load spreadsheet connections from cache (per-guild)
-    print("\n💾 Attempting to load cached spreadsheet connections...")
-    cache_loaded = await load_spreadsheets_from_cache()
-    if cache_loaded:
-        print("✅ Successfully loaded spreadsheet connections from cache!")
-    else:
-        print("📋 No cached connections available - use /entertemplate to connect to a sheet")
+            except Exception as e:
+                print(f"❌ Error setting up guild {guild.name}: {e}")
 
-    print("🔄 Starting member sync task...")
-    sync_members.start()
+        # Try to load spreadsheet connections from cache (per-guild)
+        print("\n💾 Attempting to load cached spreadsheet connections...")
+        cache_loaded = await load_spreadsheets_from_cache()
+        if cache_loaded:
+            print("✅ Successfully loaded spreadsheet connections from cache!")
+        else:
+            print("📋 No cached connections available - use /entertemplate to connect to a sheet")
 
-    print("🎫 Starting help ticket monitoring task...")
-    check_help_tickets.start()
+        print("🔄 Starting member sync task...")
+        sync_members.start()
+
+        print("🎫 Starting help ticket monitoring task...")
+        check_help_tickets.start()
 
 @bot.event
 async def on_guild_join(guild):
     """Handle setup when bot joins a new guild"""
-    print(f"🎉 Bot joined new guild: {guild.name} (ID: {guild.id}) - {guild.member_count} members")
-
-    try:
-        print(f"🏗️ Setting up new guild: {guild.name}")
-
-        # Delete default Discord channels (general text and General voice)
-        print("🗑️ Removing default Discord channels...")
-        for channel in guild.channels:
-            if channel.name.lower() == "general":
-                try:
-                    await safe_call(channel.delete(reason="Removing default Discord channel"))
-                    print(f"🗑️ Deleted default channel: {channel.name}")
-                except discord.Forbidden:
-                    print(f"❌ No permission to delete channel {channel.name}")
-                except Exception as e:
-                    print(f"⚠️ Error deleting channel {channel.name}: {e}")
-
-        # Set up the guild with all the standard setup
-        await setup_static_channels_for_guild(guild)
-        await move_bot_role_to_top_for_guild(guild)
-        await organize_role_hierarchy_for_guild(guild)
-        await remove_runner_access_from_building_channels_for_guild(guild)
-        await give_runner_access_to_all_channels_for_guild(guild)
-        await setup_ezhang_admin_role(guild)
-
-        print(f"✅ Successfully set up new guild: {guild.name}")
-
-    except Exception as e:
-        print(f"❌ Error setting up new guild {guild.name}: {e}")
+    async with admin_lock:
+            
+        print(f"🎉 Bot joined new guild: {guild.name} (ID: {guild.id}) - {guild.member_count} members")
+    
+        try:
+            print(f"🏗️ Setting up new guild: {guild.name}")
+    
+            # Delete default Discord channels (general text and General voice)
+            print("🗑️ Removing default Discord channels...")
+            for channel in guild.channels:
+                if channel.name.lower() == "general":
+                    try:
+                        await safe_call(channel.delete(reason="Removing default Discord channel"))
+                        print(f"🗑️ Deleted default channel: {channel.name}")
+                    except discord.Forbidden:
+                        print(f"❌ No permission to delete channel {channel.name}")
+                    except Exception as e:
+                        print(f"⚠️ Error deleting channel {channel.name}: {e}")
+    
+            # Set up the guild with all the standard setup
+            await setup_static_channels_for_guild(guild)
+            await move_bot_role_to_top_for_guild(guild)
+            await organize_role_hierarchy_for_guild(guild)
+            await remove_runner_access_from_building_channels_for_guild(guild)
+            await give_runner_access_to_all_channels_for_guild(guild)
+            await setup_ezhang_admin_role(guild)
+    
+            print(f"✅ Successfully set up new guild: {guild.name}")
+    
+        except Exception as e:
+            print(f"❌ Error setting up new guild {guild.name}: {e}")
 
 @bot.event
 async def on_member_join(member):
