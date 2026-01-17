@@ -827,7 +827,7 @@ async def search_and_share_test_folder(guild, role_name):
             # Create scoring instructions embed
             scoring_embed = discord.Embed(
                 title="📊 Score Input Instructions",
-                description="**IMPORTANT**: All event supervisors must input scores through the official scoring portal!",
+                description="**IMPORTANT**: All Lead Event Supervisors must input scores through the official scoring portal!",
                 color=discord.Color.blue()
             )
 
@@ -839,7 +839,7 @@ async def search_and_share_test_folder(guild, role_name):
 
             scoring_embed.add_field(
                 name="📋 Instructions",
-                value="• Use your supervisor credentials to log in\n• Select the correct tournament and event\n• Input all team scores accurately\n• Double-check scores before submitting\n• Contact admin if you have login issues",
+                value="• Lead Event Supervisors should have received an invitation email to the scoring portal\n• Select the correct tournament and event\n• Input all team scores accurately\n• Double-check scores before submitting\n• Contact admin if you have login issues",
                 inline=False
             )
 
