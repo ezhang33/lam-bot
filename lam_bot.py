@@ -1849,14 +1849,15 @@ async def organize_role_hierarchy_for_guild(guild):
 
     # Define the priority order (higher index = higher priority/position)
     priority_roles = [
-        "Volunteer",  # Lowest priority (position 1)
+        "Volunteer",  # Lowest priority
         "Lead ES",
         "Social Media",
         "Photographer",
         "Arbitrations",
         "Awards",
         "Runner",
-        "Admin",
+        "VIPer",
+        "Admin",  # Highest priority (below bot role)
         # Bot role will be handled separately as highest priority
     ]
 
@@ -1913,13 +1914,10 @@ async def organize_role_hierarchy_for_guild(guild):
         # Sort other roles alphabetically
         other_roles.sort(key=lambda r: r.name.lower())
 
-        # Build final order: other roles (lowest first) + Admin role + chapter roles + other priority roles
-        # We need to separate Admin role from other priority roles
-        sad_face_roles = [r for r in priority_role_objects if r.name == "Admin"]
-        other_priority_roles = [r for r in priority_role_objects if r.name != "Admin"]
-
+        # Build final order: other roles (lowest first) + chapter roles + priority roles (Volunteer through Admin)
+        # Admin role will be at the top of priority roles since it's last in the list
         # Note: We won't try to move the bot role itself to avoid permission issues
-        final_order = other_roles + sad_face_roles + chapter_roles + other_priority_roles
+        final_order = other_roles + chapter_roles + priority_role_objects
 
         # Update positions (start from position 1, @everyone stays at 0)
         position = 1
@@ -2695,21 +2693,13 @@ async def on_message(message):
         if message.channel.id in active_help_tickets:
             ticket_info = active_help_tickets[message.channel.id]
 
-            # Check if the message author is a runner
+            # Check if the message author is ANY runner (not just zone runners)
             is_runner = False
-
-            # Always check zone runners
-            if message.author.id in ticket_info["zone_runners"]:
-                is_runner = True
-
-            # If this ticket has reached final ping stage (ping_count >= 3),
-            # also accept responses from ANY runner
-            elif ticket_info["ping_count"] >= 3:
-                guild_id = message.guild.id if message.guild else None
-                if guild_id:
-                    all_runner_ids = await get_all_runners(guild_id)
-                    if message.author.id in all_runner_ids:
-                        is_runner = True
+            guild_id = message.guild.id if message.guild else None
+            if guild_id:
+                all_runner_ids = await get_all_runners(guild_id)
+                if message.author.id in all_runner_ids:
+                    is_runner = True
 
             if is_runner:
                 # Mark ticket as responded
@@ -2736,21 +2726,13 @@ async def on_reaction_add(reaction, user):
         if reaction.message.channel.id in active_help_tickets:
             ticket_info = active_help_tickets[reaction.message.channel.id]
 
-            # Check if the user is a runner
+            # Check if the user is ANY runner (not just zone runners)
             is_runner = False
-
-            # Always check zone runners
-            if user.id in ticket_info["zone_runners"]:
-                is_runner = True
-
-            # If this ticket has reached final ping stage (ping_count >= 3),
-            # also accept reactions from ANY runner
-            elif ticket_info["ping_count"] >= 3:
-                guild_id = reaction.message.guild.id if reaction.message.guild else None
-                if guild_id:
-                    all_runner_ids = await get_all_runners(guild_id)
-                    if user.id in all_runner_ids:
-                        is_runner = True
+            guild_id = reaction.message.guild.id if reaction.message.guild else None
+            if guild_id:
+                all_runner_ids = await get_all_runners(guild_id)
+                if user.id in all_runner_ids:
+                    is_runner = True
 
             if is_runner:
                 # Only count specific helpful reactions
@@ -2790,7 +2772,6 @@ async def perform_member_sync(guild, data):
     processed_count = 0
     invited_count = 0
     role_assignments = 0
-    nickname_updates = 0
 
     print(f"🔄 Starting member sync for {len(data)} rows...")
 
@@ -2878,26 +2859,8 @@ async def perform_member_sync(guild, data):
                         except Exception as e:
                             print(f"⚠️ Could not add role {role_name} to {member}: {e}")
 
-                # Set nickname if we have the required info
-                if first_event:
-                    sheet_name = str(row.get("Name", "")).strip()
-                    user_name = sheet_name if sheet_name else member.name
-                    expected_nickname = f"{user_name} ({first_event})"
-
-                    if len(expected_nickname) > 32:
-                        expected_nickname = expected_nickname[:32]
-
-                    if member.nick != expected_nickname:
-                        try:
-                            result = await handle_rate_limit(
-                                member.edit(nick=expected_nickname, reason="Sync"),
-                                f"editing nickname for {member}"
-                            )
-                            if result is not None:
-                                nickname_updates += 1
-                                print(f"📝 Updated nickname for {member}: '{expected_nickname}'")
-                        except Exception as e:
-                            print(f"⚠️ Could not set nickname for {member}: {e}")
+                # Nickname updates are now only done on first login (on_member_join event)
+                # Not updated during sync to avoid overwriting user-customized nicknames
 
             continue
 
@@ -2975,13 +2938,12 @@ async def perform_member_sync(guild, data):
     # Organize role hierarchy after sync
     await organize_role_hierarchy_for_guild(guild)
 
-    print(f"✅ Sync complete: {processed_count} users processed, {role_assignments} roles assigned, {nickname_updates} nicknames updated")
+    print(f"✅ Sync complete: {processed_count} users processed, {role_assignments} roles assigned")
 
     return {
         "processed": processed_count,
         "invited": invited_count,
         "role_assignments": role_assignments,
-        "nickname_updates": nickname_updates,
         "total_rows": len(data)
     }
 
@@ -3309,8 +3271,7 @@ async def enter_folder_command(interaction: discord.Interaction, folder_link: st
                         name="🔄 Immediate Sync Results",
                         value=f"• **{sync_results['processed']}** Discord IDs processed\n"
                               f"• **{sync_results['invited']}** new invites sent\n"
-                              f"• **{sync_results['role_assignments']}** roles assigned\n"
-                              f"• **{sync_results['nickname_updates']}** nicknames updated",
+                              f"• **{sync_results['role_assignments']}** roles assigned",
                         inline=False
                     )
 
@@ -3419,7 +3380,6 @@ async def sync_command(interaction: discord.Interaction):
                            f"👥 **Current members:** {len(guild.members)}\n"
                            f"📨 **New invites sent:** {sync_results['invited']}\n"
                            f"🎭 **Role assignments:** {sync_results['role_assignments']}\n"
-                           f"📝 **Nickname updates:** {sync_results['nickname_updates']}\n"
                            f"📋 **Total sheet rows:** {sync_results['total_rows']}",
                 color=discord.Color.green()
             )
@@ -3847,7 +3807,7 @@ async def organize_roles_command(interaction: discord.Interaction):
 
                 embed.add_field(
                     name="📋 Priority Order (Bottom to Top)",
-                    value="1. Other roles (alphabetical)\n2. **Chapter Roles** (green, alphabetical)\n4. **Volunteer**\n5. **Lead ES**\n6. **Social Media**\n7. **Photographer**\n8. **Arbitrations**\n9. **Awards**\n10. **Runner**\n11. **Admin**\n12. **Bot Role** (highest)",
+                    value="1. Other roles (alphabetical)\n2. **Chapter Roles** (green, alphabetical)\n3. **Volunteer**\n4. **Lead ES**\n5. **Social Media**\n6. **Photographer**\n7. **Arbitrations**\n8. **Awards**\n9. **Runner**\n10. **VIPer**\n11. **Admin**\n12. **Bot Role** (highest)",
                     inline=False
                 )
 
@@ -4131,6 +4091,23 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
                         color=discord.Color.green()
                     )
 
+                # Set nickname after successful login
+                if user_name and first_event:
+                    nickname = f"{user_name} ({first_event})"
+                    # Truncate to 32 characters (Discord limit)
+                    if len(nickname) > 32:
+                        nickname = nickname[:32]
+                    try:
+                        await handle_rate_limit(
+                            user.edit(nick=nickname, reason="Login - setting nickname"),
+                            f"editing nickname for {user}"
+                        )
+                        print(f"📝 Set nickname for {user} after login: '{nickname}'")
+                    except discord.Forbidden:
+                        print(f"❌ No permission to set nickname for {user}")
+                    except Exception as e:
+                        print(f"⚠️ Could not set nickname for {user}: {e}")
+
                 # Build your information field
                 info_text = f"**Name:** {user_name or 'Not specified'}\n"
                 info_text += f"**Email:** {email}"
@@ -4187,7 +4164,7 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
 
             else:
                 await interaction.followup.send(
-                    "✅ Discord ID updated successfully, but could not trigger sync. Please contact an admin.",
+                    "✅ Discord ID updated successfully, but could not sync with server. Please contact an admin.",
                     ephemeral=True
                 )
 
@@ -4573,8 +4550,20 @@ async def check_help_tickets():
             # Calculate time since last ping
             time_since_created = current_time - ticket_info["created_at"]
 
-            # Check if 5 minutes have passed since creation/last ping
-            if time_since_created >= timedelta(minutes=5):
+            # Determine wait time based on ping count
+            # ping_count = 1 (after 1st ping): wait 3 minutes for 2nd ping
+            # ping_count = 2 (after 2nd ping): wait 1 minute for 3rd ping
+            ping_count = ticket_info["ping_count"]
+            if ping_count == 1:
+                wait_time = timedelta(minutes=3)
+            elif ping_count == 2:
+                wait_time = timedelta(minutes=1)
+            else:
+                # Should not reach here, but default to 3 minutes
+                wait_time = timedelta(minutes=1)
+
+            # Check if enough time has passed since last ping
+            if time_since_created >= wait_time:
                 # Find the thread across all guilds
                 thread = None
                 for guild in bot.guilds:
@@ -4971,15 +4960,46 @@ async def send_test_materials_command(interaction: discord.Interaction):
 
             # Send initial status
             await interaction.followup.send(
-                f"🔍 Searching for test materials for {len(event_roles)} event(s)...\n\n"
+                f"🔄 Processing test materials for {len(event_roles)} event(s)...\n\n"
+                f"• Deleting old pinned test materials\n"
+                f"• Sending new test materials\n\n"
                 f"This may take a while. Check the event channels for results.",
                 ephemeral=True
             )
 
             # Loop through all event roles and send test materials
             success_count = 0
+            deleted_count = 0
             for role_name in event_roles:
                 try:
+                    print(f"📚 Processing test materials for: {role_name}")
+                    
+                    # First, delete old pinned test materials from this event's channels
+                    sanitized_role_name = role_name.lower().replace(' ', '-').replace('/', '-').replace('\\', '-').replace(':', '-').replace('*', '-').replace('?', '-').replace('"', '').replace('<', '').replace('>', '').replace('|', '-')
+                    
+                    # Find all channels that belong to this event (start with the sanitized role name)
+                    event_channels = [ch for ch in guild.text_channels if ch.name.startswith(sanitized_role_name + "-")]
+                    
+                    for channel in event_channels:
+                        try:
+                            # Get all pinned messages in this channel
+                            pinned_messages = await channel.pins()
+                            
+                            # Delete pinned messages that were sent by the bot
+                            for msg in pinned_messages:
+                                if msg.author == bot.user:
+                                    try:
+                                        await msg.delete()
+                                        deleted_count += 1
+                                        print(f"🗑️ Deleted old pinned test material from #{channel.name}")
+                                        # Small delay to avoid rate limiting
+                                        await asyncio.sleep(0.2)
+                                    except Exception as delete_error:
+                                        print(f"⚠️ Could not delete message in #{channel.name}: {delete_error}")
+                        except Exception as pin_error:
+                            print(f"⚠️ Error checking pins in #{channel.name}: {pin_error}")
+                    
+                    # Now send new test materials
                     print(f"📚 Searching test materials for: {role_name}")
                     await search_and_share_test_folder(guild, role_name)
                     success_count += 1
@@ -4989,12 +5009,20 @@ async def send_test_materials_command(interaction: discord.Interaction):
                     print(f"⚠️ Error sending test materials for {role_name}: {e}")
 
             result_embed = discord.Embed(
-                title="✅ All Test materials send",
-                description=f"The server has completed the task to send test materials for {success_count}/{len(event_roles)} events !",
+                title="✅ All Test Materials Sent",
+                description=f"Successfully sent test materials for **{success_count}/{len(event_roles)}** events!",
                 color=discord.Color.green()
             )
+            
+            if deleted_count > 0:
+                result_embed.add_field(
+                    name="🗑️ Old Materials Cleaned",
+                    value=f"Deleted **{deleted_count}** old pinned test material message(s)",
+                    inline=False
+                )
 
-            print(f"✅ Test materials command completed: {success_count}/{len(event_roles)} events processed")
+            await interaction.followup.send(embed=result_embed, ephemeral=True)
+            print(f"✅ Test materials command completed: {success_count}/{len(event_roles)} events processed, {deleted_count} old messages deleted")
 
         except Exception as e:
             await interaction.followup.send(f"❌ Error sending test materials: {str(e)}", ephemeral=True)
