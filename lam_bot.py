@@ -2621,11 +2621,18 @@ async def on_thread_create(thread):
 
             # Get all runners in this zone
             zone_runners = await get_zone_runners(guild_id, zone)
+            is_fallback_to_all = False
             if not zone_runners:
-                print(f"⚠️ No runners found for zone {zone}")
-                return
-
-            print(f"👥 Found {len(zone_runners)} runners in zone {zone}")
+                print(f"⚠️ No runners found for zone {zone}, falling back to ALL runners")
+                # Fall back to getting all runners if no zone runners found
+                zone_runners = await get_all_runners(guild_id)
+                is_fallback_to_all = True
+                if not zone_runners:
+                    print(f"⚠️ No runners found in server at all!")
+                    return
+                print(f"🚨 Pinging ALL {len(zone_runners)} runners (no zone assignments)")
+            else:
+                print(f"👥 Found {len(zone_runners)} runners in zone {zone}")
 
             # Ping the runners in the ticket
             runner_mentions = []
@@ -2648,15 +2655,26 @@ async def on_thread_create(thread):
                     description=f"**Ticket:** {thread.mention}\n**Creator:** {ticket_creator.mention}\n**Event:** {event}\n**Location:** {location}",
                     color=discord.Color.yellow()
                 )
-                embed.add_field(
-                    name="Runners Assigned",
-                    value=f"Please respond here if you can assist with this ticket!",
-                    inline=False
-                )
+                
+                if is_fallback_to_all:
+                    embed.add_field(
+                        name="🚨 ALL Runners",
+                        value=f"No zone runners found - pinging all runners!\nPlease respond here if you can assist with this ticket!",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="Runners Assigned",
+                        value=f"Please respond here if you can assist with this ticket!",
+                        inline=False
+                    )
 
                 # Send mentions as regular message content (not in embed) so Discord actually notifies users
                 await thread.send(content=mention_text, embed=embed)
-                print(f"✅ Pinged {len(runner_mentions)} zone runners in ticket")
+                if is_fallback_to_all:
+                    print(f"✅ Pinged {len(runner_mentions)} runners (ALL runners - no zone assignments) in ticket")
+                else:
+                    print(f"✅ Pinged {len(runner_mentions)} zone runners in ticket")
 
                 # Track this ticket for re-pinging
                 active_help_tickets[thread.id] = {
@@ -2673,7 +2691,10 @@ async def on_thread_create(thread):
                 print(f"🎯 Added ticket {thread.id} to tracking system")
 
             else:
-                print(f"⚠️ No valid Discord members found for zone {zone} runners")
+                if is_fallback_to_all:
+                    print(f"⚠️ No valid Discord members found among ALL runners")
+                else:
+                    print(f"⚠️ No valid Discord members found for zone {zone} runners")
 
     except Exception as e:
         print(f"❌ Error handling help ticket creation: {e}")
