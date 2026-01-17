@@ -14,9 +14,8 @@ load_dotenv()
 
 TOKEN         = os.getenv("DISCORD_TOKEN")
 SERVICE_EMAIL = os.getenv("SERVICE_EMAIL")
-SHEET_ID      = os.getenv("SHEET_ID")  # Optional - can be set via /entertemplate command
-SHEET_FILE_NAME = os.getenv("SHEET_FILE_NAME", "[TEMPLATE] Socal State")  # Name of the Google Sheet file to look for
-SHEET_PAGE_NAME = os.getenv("SHEET_PAGE_NAME", "Sheet1")  # Name of the worksheet/tab within the sheet
+SHEET_ID      = os.getenv("SHEET_ID")  # Optional - can be set via /enterfolder command
+SHEET_PAGE_NAME = os.getenv("SHEET_PAGE_NAME", "lambot")  # Name of the worksheet/tab within the sheet
 AUTO_CREATE_ROLES = os.getenv("AUTO_CREATE_ROLES", "true").lower() == "true"
 DEFAULT_ROLE_COLOR = os.getenv("DEFAULT_ROLE_COLOR", "light_gray")  # blue, red, green, purple, etc.
 
@@ -50,8 +49,8 @@ sheets = {}  # guild_id -> worksheet object
 spreadsheets = {}  # guild_id -> spreadsheet object
 
 # Note: SHEET_ID is still available as environment variable but won't auto-connect
-# Use /entertemplate command to connect to sheets dynamically
-print("📋 Bot starting - will attempt to load cached sheet connections or use /entertemplate command")
+# Use /enterfolder command to connect to sheets dynamically
+print("📋 Bot starting - will attempt to load cached sheet connections or use /enterfolder command")
 
 # Store pending role assignments and user info for users who haven't joined yet
 pending_users = {}  # Changed from pending_roles to store more info
@@ -70,7 +69,7 @@ admin_lock = asyncio.Lock()
 rate_limit_lock = asyncio.Lock()
 reset_active = False
 
-ALLOWED_DURING_RESET = {"entertemplate"}
+ALLOWED_DURING_RESET = {"enterfolder"}
 
 async def safe_call(coro):
     async with rate_limit_lock:
@@ -2221,7 +2220,7 @@ async def on_ready():
         if cache_loaded:
             print("✅ Successfully loaded spreadsheet connections from cache!")
         else:
-            print("📋 No cached connections available - use /entertemplate to connect to a sheet")
+            print("📋 No cached connections available - use /enterfolder to connect to a sheet")
 
         print("🔄 Starting member sync task...")
         sync_members.start()
@@ -2782,7 +2781,7 @@ async def on_thread_delete(thread):
 
 
 async def perform_member_sync(guild, data):
-    """Core member sync logic that can be used by both /sync command and /entertemplate"""
+    """Core member sync logic that can be used by both /sync command and /enterfolder"""
     global chapter_role_names
 
     # Build set of already-joined member IDs
@@ -3010,15 +3009,18 @@ async def get_template_command(interaction: discord.Interaction):
               f"5. Click 'Send'\n"
               f"6. Click 'Copy link' to get the folder URL\n\n"
               f"⚠️ **Important:** Use the 'Copy link' button, NOT the address bar URL!\n\n"
-              f"Then use `/entertemplate` with that copied folder link!",
+              f"Then use `/enterfolder` with that copied folder link!",
         inline=False
     )
     embed.set_footer(text="Use these templates for your Science Olympiad events")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="entertemplate", description="Set a new template Google Drive folder to sync users from")
-@app_commands.describe(folder_link="Google Drive folder link (use 'Copy link' from Share dialog)")
-async def enter_template_command(interaction: discord.Interaction, folder_link: str):
+@bot.tree.command(name="enterfolder", description="Set a new template Google Drive folder to sync users from")
+@app_commands.describe(
+    folder_link="Google Drive folder link (use 'Copy link' from Share dialog)",
+    main_sheet_name="Name of the main sheet to use (e.g., '[TEMPLATE] Socal State')"
+)
+async def enter_folder_command(interaction: discord.Interaction, folder_link: str, main_sheet_name: str):
     """Set a new Google Drive folder to sync users from"""
 
     # Extract folder ID from the Google Drive link
@@ -3070,7 +3072,7 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
 
         try:
             # Try to access the folder and find the template sheet
-            print(f"🔍 Searching for '{SHEET_FILE_NAME}' in folder: {folder_id}")
+            print(f"🔍 Searching for '{main_sheet_name}' in folder: {folder_id}")
 
             # Use Google Drive API to search within the specific folder
             found_sheet = None
@@ -3091,7 +3093,7 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
 
                 # Search for Google Sheets files in the specific folder
                 # Query: files in the folder that are Google Sheets and contain the name
-                query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains '{SHEET_FILE_NAME}'"
+                query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains '{main_sheet_name}'"
                 print(f"🔍 DEBUG: Search query: {query}")
 
                 print("🔍 DEBUG: Executing Drive API search...")
@@ -3117,7 +3119,7 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
                 target_sheet_id = None
                 for file in files:
                     print(f"🔍 DEBUG: Checking file: {file['name']}")
-                    if SHEET_FILE_NAME in file['name']:
+                    if main_sheet_name in file['name']:
                         target_sheet_id = file['id']
                         print(f"✅ Found target sheet: {file['name']} (ID: {target_sheet_id})")
                         break
@@ -3135,8 +3137,8 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
                         # Fallback to searching all accessible sheets
                         print("📋 Falling back to global search...")
                         try:
-                            print(f"🔍 DEBUG: Attempting global search for '{SHEET_FILE_NAME}'")
-                            found_sheet = gc.open(SHEET_FILE_NAME)
+                            print(f"🔍 DEBUG: Attempting global search for '{main_sheet_name}'")
+                            found_sheet = gc.open(main_sheet_name)
                             print(f"✅ Found sheet by title: {found_sheet.title}")
                         except gspread.SpreadsheetNotFound as e2:
                             print("❌ Sheet not found in global search either")
@@ -3148,9 +3150,9 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
 
                 if not found_sheet:
                     await interaction.followup.send(
-                        f"❌ Could not find '{SHEET_FILE_NAME}' sheet in that folder!\n\n"
+                        f"❌ Could not find '{main_sheet_name}' sheet in that folder!\n\n"
                         "**Please make sure:**\n"
-                        f"• Sheet is named exactly '{SHEET_FILE_NAME}'\n"
+                        f"• Sheet is named exactly '{main_sheet_name}'\n"
                         f"• Sheet is inside the folder you shared\n"
                         f"• Folder is shared with: `{SERVICE_EMAIL}`\n"
                         "• Sheet has proper permissions\n\n"
@@ -3395,7 +3397,7 @@ async def sync_command(interaction: discord.Interaction):
             if guild_id not in sheets:
                 await interaction.followup.send(
                     "❌ No sheet connected for this server!\n\n"
-                    f"Use `/entertemplate` to connect to a Google Drive folder with a '{SHEET_FILE_NAME}' sheet first.",
+                    "Use `/enterfolder` to connect to a Google Drive folder first.",
                     ephemeral=True
                 )
                 return
@@ -3442,10 +3444,10 @@ async def sheet_info_command(interaction: discord.Interaction):
             embed = discord.Embed(
                 title="📋 No Sheet Connected",
                 description="No Google Sheet is currently connected to this server.\n\n"
-                           f"Use `/entertemplate` to connect to a Google Drive folder with a '{SHEET_FILE_NAME}' sheet.",
+                           "Use `/enterfolder` to connect to a Google Drive folder.",
                 color=discord.Color.orange()
             )
-            embed.add_field(name="💡 How to Connect", value="1. Use `/entertemplate` command\n2. Paste your Google Drive folder link\n3. Bot will find and connect to the sheet", inline=False)
+            embed.add_field(name="💡 How to Connect", value="1. Use `/enterfolder` command\n2. Paste your Google Drive folder link\n3. Provide the main sheet name\n4. Bot will find and connect to the sheet", inline=False)
         else:
             try:
                 # Get sheet info
@@ -3495,7 +3497,7 @@ async def sheet_info_command(interaction: discord.Interaction):
                     description=f"Connected to sheet but cannot access data:\n```{str(e)}```",
                     color=discord.Color.red()
                 )
-                embed.add_field(name="💡 Suggestion", value="Try using `/entertemplate` to reconnect to the sheet", inline=False)
+                embed.add_field(name="💡 Suggestion", value="Try using `/enterfolder` to reconnect to the sheet", inline=False)
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -3617,7 +3619,7 @@ async def help_command(interaction: discord.Interaction):
                     "2. Use `/serviceaccount` to get the LamBot's service account email\n"
                     "3. Share your Google Drive Folder with that email (Editor permissions)\n"
                     "4. Get folder link: Right-click folder → Share → Copy link\n"
-                    "5. Use `/entertemplate` with that copied folder link\n"
+                    "5. Use `/enterfolder` with that copied folder link\n"
                     "6. Use `/sheetinfo` to verify the connection\n\n",
         color=discord.Color.blue()
     )
@@ -3649,9 +3651,8 @@ async def help_command(interaction: discord.Interaction):
 
     # # Setup commands
     # embed.add_field(
-    #     name="⚙️ `/entertemplate` `folder_link`",
-    #     value=f"Connect to a new Google Drive folder. The bot will search within that folder for '{SHEET_FILE_NAME}' sheet and use it for syncing users.\n\n⚠️ **Important:** Use the 'Copy link' button from Google Drive's Share dialog, not the address bar URL!\n\n"
-    #           f"⚠️ **Important:** Use the 'Copy link' button, NOT the address bar URL!",
+    #     name="⚙️ `/enterfolder` `folder_link` `main_sheet_name`",
+    #     value="Connect to a new Google Drive folder and specify the main sheet name to use for syncing users.\n\n⚠️ **Important:** Use the 'Copy link' button from Google Drive's Share dialog, not the address bar URL!",
     #     inline=False
     # )
 
@@ -3965,7 +3966,7 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
         # Check if we have a sheet connected
         if guild_id not in sheets:
             await interaction.followup.send(
-                "❌ No sheet connected for this server! Please ask an admin to connect a sheet first using `/entertemplate`.",
+                "❌ No sheet connected for this server! Please ask an admin to connect a sheet first using `/enterfolder`.",
                 ephemeral=True
             )
             return
@@ -4231,7 +4232,7 @@ async def assign_runner_zones_command(interaction: discord.Interaction):
         guild_id = interaction.guild.id
         if guild_id not in spreadsheets:
             await interaction.followup.send(
-                "❌ No spreadsheet connected for this server! Use `/entertemplate` first to connect your sheet.",
+                "❌ No spreadsheet connected for this server! Use `/enterfolder` first to connect your sheet.",
                 ephemeral=True
             )
             return
@@ -4420,9 +4421,105 @@ async def assign_runner_zones_command(interaction: discord.Interaction):
         debug_text += f"\n... and {len(debug_info) - 5} more buildings"
 
     await interaction.followup.send(
-        f"✅ Assigned {k_to_use} zones for {len(updates)} rows across {len(building_points)} buildings in '{worksheet_name}'.",
+        f"✅ Assigned {k_to_use} zones for {len(updates)} rows across {len(building_points)} buildings in '{worksheet_name}'.\n\n"
+        f"Now sending runner assignments to building channels...",
         ephemeral=True
     )
+
+    # Send messages to each building channel with their designated runners
+    try:
+        guild = interaction.guild
+        
+        # Get the main sheet to cross-reference Discord IDs
+        main_sheet = sheets.get(guild_id)
+        main_data = []
+        if main_sheet:
+            try:
+                main_data = main_sheet.get_all_records()
+            except Exception as e:
+                print(f"⚠️ Could not access main sheet for Discord IDs: {e}")
+        
+        # Create email -> discord_id mapping from main sheet
+        email_to_discord = {}
+        for row in main_data:
+            email = str(row.get("Email", "")).strip().lower()
+            discord_id = str(row.get("Discord ID", "")).strip()
+            if email and discord_id:
+                try:
+                    email_to_discord[email] = int(discord_id)
+                except ValueError:
+                    pass
+        
+        # Group runners by building (without zones)
+        building_runners = defaultdict(list)  # building -> [(name, discord_id)]
+        
+        for idx, row in enumerate(rows, start=2):
+            lower_row = {(k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items()}
+            building = str(lower_row.get("building", lower_row.get("building 1", ""))).strip()
+            name = str(lower_row.get("name", "")).strip()
+            email = str(lower_row.get("email", "")).strip().lower()
+            
+            if not building or not name:
+                continue
+            
+            # Check if this row was assigned a zone (meaning they're a runner for this building)
+            is_runner = any(row_idx == idx for row_idx, _ in updates)
+            
+            if is_runner:
+                discord_id = email_to_discord.get(email)
+                building_runners[building].append((name, discord_id))
+        
+        # Send message to each building channel
+        messages_sent = 0
+        for building, runners in building_runners.items():
+            # Find the building chat channel
+            building_chat_name = f"{building.lower().replace(' ', '-')}-chat"
+            building_channel = discord.utils.get(guild.text_channels, name=building_chat_name)
+            
+            if not building_channel:
+                print(f"⚠️ Could not find building channel: {building_chat_name}")
+                continue
+            
+            if not runners:
+                continue
+            
+            # Build the message with mentions
+            embed = discord.Embed(
+                title=f"🏃 Designated Runners for {building}",
+                description="Here are the runners assigned to help with this building:",
+                color=discord.Color.orange()
+            )
+            
+            # Create list of runner mentions/names
+            runner_mentions = []
+            for name, discord_id in runners:
+                if discord_id:
+                    runner_mentions.append(f"• <@{discord_id}>")
+                else:
+                    runner_mentions.append(f"• {name}")
+            
+            runners_text = "\n".join(runner_mentions)
+            embed.add_field(
+                name=f"Runners:",
+                value=runners_text,
+                inline=False
+            )
+            
+            embed.set_footer(text="If you need help, create a ticket in the #help forum!\nDM these runners if you need urgent help!")
+            
+            try:
+                await building_channel.send(embed=embed)
+                messages_sent += 1
+                print(f"✅ Sent runner assignments to {building_chat_name}")
+            except Exception as e:
+                print(f"⚠️ Error sending message to {building_chat_name}: {e}")
+        
+        print(f"✅ Sent runner assignments to {messages_sent} building channels")
+        
+    except Exception as e:
+        print(f"⚠️ Error sending runner assignments to channels: {e}")
+
+    
 
 
 @tasks.loop(minutes=60)
@@ -4432,7 +4529,7 @@ async def sync_members():
 
     # Check if we have any sheets connected
     if not sheets:
-        print("⚠️ No sheets connected - use /entertemplate to connect to a sheet in each server")
+        print("⚠️ No sheets connected - use /enterfolder to connect to a sheet in each server")
         return
 
     # Sync each guild with its own sheet
@@ -4846,7 +4943,7 @@ async def send_test_materials_command(interaction: discord.Interaction):
             if guild_id not in spreadsheets:
                 await interaction.followup.send(
                     "❌ No spreadsheet connected for this server!\n\n"
-                    "Use `/entertemplate` to connect to a Google Drive folder first.",
+                    "Use `/enterfolder` to connect to a Google Drive folder first.",
                     ephemeral=True
                 )
                 return
@@ -4867,7 +4964,7 @@ async def send_test_materials_command(interaction: discord.Interaction):
             if not event_roles:
                 await interaction.followup.send(
                     "❌ No event roles found in this server!\n\n"
-                    "Make sure you've run `/entertemplate` to create event roles first.",
+                    "Make sure you've run `/enterfolder` to create event roles first.",
                     ephemeral=True
                 )
                 return
@@ -5009,7 +5106,7 @@ async def clear_cache_command(interaction: discord.Interaction):
             if cleared or guild_id in sheets or guild_id in spreadsheets:
                 embed = discord.Embed(
                     title="🗑️ Cache Cleared",
-                    description="Cached spreadsheet connection for this server has been cleared.\nUse `/entertemplate` to reconnect to a sheet.",
+                    description="Cached spreadsheet connection for this server has been cleared.\nUse `/enterfolder` to reconnect to a sheet.",
                     color=discord.Color.green()
                 )
             else:
@@ -5054,7 +5151,7 @@ async def release_event_test_command(interaction: discord.Interaction, event_nam
             if guild_id not in spreadsheets:
                 await interaction.followup.send(
                     "❌ No spreadsheet connected for this server!\n\n"
-                    "Use `/entertemplate` to connect to a Google Drive folder first.",
+                    "Use `/enterfolder` to connect to a Google Drive folder first.",
                     ephemeral=True
                 )
                 return
@@ -5547,13 +5644,13 @@ async def block_commands_during_reset(interaction: discord.Interaction) -> bool:
     if not reset_active:
         return True
 
-    # Allow only entertemplate during reset
+    # Allow only enterfolder during reset
     if interaction.command and interaction.command.name in ALLOWED_DURING_RESET:
         return True
 
     await interaction.response.send_message(
         "🚧 Server reset in progress or done.\n"
-        "Only `/entertemplate` is available right now.",
+        "Only `/enterfolder` is available right now.",
         ephemeral=True
     )
     return False
