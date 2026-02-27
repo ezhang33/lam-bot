@@ -2746,7 +2746,7 @@ async def get_zone_runners(guild_id, zone):
 
 
 async def check_for_burger_request(thread):
-    """Check if a help ticket contains '55 burgers' or 'fifty five burgers' and react with burger emoji"""
+    """Check if a help ticket contains '55 burgers' or 'fifty five burgers' and DM burger to creator"""
     try:
         # Check the thread title
         thread_title_lower = thread.name.lower()
@@ -2771,11 +2771,29 @@ async def check_for_burger_request(thread):
             except Exception as e:
                 print(f"⚠️ Could not check initial message for burger phrase: {e}")
         
-        # If burger phrase found, send burger emoji
+        # If burger phrase found, DM the ticket creator
         if has_burger_phrase:
             print(f"🍔 Burger request detected in ticket '{thread.name}'!")
-            await thread.send("🍔")
-            print(f"✅ Sent burger emoji to ticket '{thread.name}'")
+            
+            # Get the ticket creator
+            ticket_creator = thread.owner
+            if not ticket_creator:
+                print(f"⚠️ Could not determine ticket creator to send burger DM")
+                return
+            
+            try:
+                # Send burger emoji DM
+                await ticket_creator.send("🍔")
+                print(f"✅ Sent burger emoji DM to {ticket_creator}")
+                
+                # Send "burger 1 of 55" message
+                await ticket_creator.send("burger 1 of 55")
+                print(f"✅ Sent 'burger 1 of 55' DM to {ticket_creator}")
+                
+            except discord.Forbidden:
+                print(f"⚠️ Cannot DM {ticket_creator} - they may have DMs disabled")
+            except Exception as dm_error:
+                print(f"❌ Error sending burger DM to {ticket_creator}: {dm_error}")
             
     except Exception as e:
         print(f"❌ Error checking for burger request: {e}")
