@@ -2745,6 +2745,44 @@ async def get_zone_runners(guild_id, zone):
         return []
 
 
+async def check_for_burger_request(thread):
+    """Check if a help ticket contains '55 burgers' or 'fifty five burgers' and react with burger emoji"""
+    try:
+        # Check the thread title
+        thread_title_lower = thread.name.lower()
+        
+        # Check if the phrases exist in the title
+        has_burger_phrase = ("55 burgers" in thread_title_lower or 
+                            "fifty five burgers" in thread_title_lower or
+                            "55 burger" in thread_title_lower or
+                            "fifty five burger" in thread_title_lower)
+        
+        # If not in title, check the initial message
+        if not has_burger_phrase:
+            try:
+                # Get the first message in the thread (the initial post)
+                async for message in thread.history(limit=1, oldest_first=True):
+                    message_content_lower = message.content.lower()
+                    has_burger_phrase = ("55 burgers" in message_content_lower or 
+                                        "fifty five burgers" in message_content_lower or
+                                        "55 burger" in message_content_lower or
+                                        "fifty five burger" in message_content_lower)
+                    break
+            except Exception as e:
+                print(f"⚠️ Could not check initial message for burger phrase: {e}")
+        
+        # If burger phrase found, send burger emoji
+        if has_burger_phrase:
+            print(f"🍔 Burger request detected in ticket '{thread.name}'!")
+            await thread.send("🍔")
+            print(f"✅ Sent burger emoji to ticket '{thread.name}'")
+            
+    except Exception as e:
+        print(f"❌ Error checking for burger request: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 @bot.event
 async def on_thread_create(thread):
     """Handle new help tickets - ping runners in the user's zone"""
@@ -2757,6 +2795,9 @@ async def on_thread_create(thread):
             thread.parent.type == discord.ChannelType.forum):
 
             print(f"🎫 New help ticket created: '{thread.name}' by {thread.owner}")
+
+            # Check for burger request in the ticket
+            await check_for_burger_request(thread)
 
             # Get the user who created the ticket
             ticket_creator = thread.owner
