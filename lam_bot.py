@@ -2809,9 +2809,9 @@ async def check_for_burger_request(thread):
                     await ticket_creator.send(f"Burger {burger_num} of 55")
                     print(f"✅ Sent burger {burger_num} of 55 to {ticket_creator}")
                     
-                    # Wait random time between 5-60 seconds before next burger (except after the last one)
+                    # Wait random time between 5 seconds to 1 hour before next burger (except after the last one)
                     if burger_num < 55:
-                        delay = random.uniform(5, 60)
+                        delay = random.uniform(5, 3600)
                         print(f"⏱️ Waiting {delay:.1f} seconds before next burger...")
                         await asyncio.sleep(delay)
                 
