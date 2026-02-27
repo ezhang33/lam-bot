@@ -1426,9 +1426,7 @@ async def post_welcome_instructions(welcome_channel):
             name="❓ Need Help?",
             value="• **Can't find your email?** Contact an admin\n"
                   "• **Questions about your assignment?** Ask in volunteer channels\n"
-                  "• **Technical problems?** Mention an admin or moderator\n"
-                  "• **Don't know who the admins/moderators are?** Contact Edward Zhang\n"
-                  "• **Edward's ghosting you?** LOL gg. Maybe try sending him $5. Jkjk you should contact David Zheng or Brian Lam instead",
+                  "• **Technical problems?** Mention an admin or moderator",
             inline=False
         )
 
