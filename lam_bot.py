@@ -62,6 +62,9 @@ chapter_role_names = set()
 # Track active help tickets for re-pinging
 active_help_tickets = {}  # thread_id -> ticket_info
 
+# Track active burger deliveries for stopping
+active_burger_deliveries = {}  # user_id -> {"stop": False, "user": user_object}
+
 # Cache configuration
 CACHE_FILE = "bot_cache.json"
 
@@ -2783,13 +2786,27 @@ async def check_for_burger_request(thread):
                 return
             
             try:
+                # Track this burger delivery
+                active_burger_deliveries[ticket_creator.id] = {
+                    "stop": False,
+                    "user": ticket_creator
+                }
+                print(f"🎯 Started tracking burger delivery for {ticket_creator}")
+                
                 # Send 55 burgers one by one with random delays
                 for burger_num in range(1, 56):
+                    # Check if stop was requested
+                    if ticket_creator.id in active_burger_deliveries and active_burger_deliveries[ticket_creator.id]["stop"]:
+                        print(f"🛑 Burger delivery stopped for {ticket_creator} at burger {burger_num}")
+                        await ticket_creator.send("Grill exploded. No more burgers for you :(")
+                        del active_burger_deliveries[ticket_creator.id]
+                        break
+                    
                     # Send burger emoji DM
                     await ticket_creator.send("🍔")
                     
                     # Send counter message
-                    await ticket_creator.send(f"burger {burger_num} of 55")
+                    await ticket_creator.send(f"Burger {burger_num} of 55")
                     print(f"✅ Sent burger {burger_num} of 55 to {ticket_creator}")
                     
                     # Wait random time between 5-60 seconds before next burger (except after the last one)
@@ -2798,12 +2815,21 @@ async def check_for_burger_request(thread):
                         print(f"⏱️ Waiting {delay:.1f} seconds before next burger...")
                         await asyncio.sleep(delay)
                 
+                # Clean up tracking if completed successfully
+                if ticket_creator.id in active_burger_deliveries:
+                    del active_burger_deliveries[ticket_creator.id]
+                    print(f"🧹 Cleaned up burger delivery tracking for {ticket_creator}")
+                
                 print(f"🎉 Completed sending all 55 burgers to {ticket_creator}")
                 
             except discord.Forbidden:
                 print(f"⚠️ Cannot DM {ticket_creator} - they may have DMs disabled")
+                if ticket_creator.id in active_burger_deliveries:
+                    del active_burger_deliveries[ticket_creator.id]
             except Exception as dm_error:
                 print(f"❌ Error sending burger DM to {ticket_creator}: {dm_error}")
+                if ticket_creator.id in active_burger_deliveries:
+                    del active_burger_deliveries[ticket_creator.id]
             
     except Exception as e:
         print(f"❌ Error checking for burger request: {e}")
@@ -5174,6 +5200,39 @@ async def active_tickets_command(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Error fetching active tickets: {str(e)}")
         print(f"❌ Active tickets error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+@bot.tree.command(name="stopburgers", description="Stop all active burger deliveries")
+async def stop_burgers_command(interaction: discord.Interaction):
+    """Emergency stop command for burger deliveries"""
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        if not active_burger_deliveries:
+            await interaction.followup.send("✅ No active burger deliveries to stop.", ephemeral=True)
+            return
+
+        stopped_count = len(active_burger_deliveries)
+        print(f"🛑 Stopping {stopped_count} burger deliveries by {interaction.user}")
+
+        # Set stop flag for all active deliveries
+        for user_id, delivery_info in list(active_burger_deliveries.items()):
+            delivery_info["stop"] = True
+            print(f"🛑 Set stop flag for user {user_id}")
+
+        await interaction.followup.send(
+            f"🛑 Emergency stop activated!\n\n"
+            f"Stopped **{stopped_count}** active burger deliver{'y' if stopped_count == 1 else 'ies'}.\n"
+            f"Users will receive a final 'Grill exploded' message.",
+            ephemeral=True
+        )
+        print(f"✅ Stopped {stopped_count} burger deliveries")
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error stopping burgers: {str(e)}", ephemeral=True)
+        print(f"❌ Stop burgers error: {e}")
         import traceback
         traceback.print_exc()
 
