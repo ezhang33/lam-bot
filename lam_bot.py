@@ -1021,18 +1021,25 @@ async def search_and_share_useful_links(guild):
 
         print(f"✅ DEBUG: Found target channel: #{target_channel.name}")
 
-        # Check if useful links message already exists in pinned messages
+        # Delete old pinned useful links messages from the bot
         pinned_messages = await safe_call(target_channel.pins())
-        useful_links_exists = False
-
+        deleted_count = 0
+        
         for message in pinned_messages:
-            if message.embeds and message.embeds[0].title and "🔗 Useful Links & Resources" in message.embeds[0].title:
-                useful_links_exists = True
-                print(f"✅ DEBUG: Useful links message already pinned in #{target_channel.name}, skipping")
-                break
-
-        if useful_links_exists:
-            return
+            # Check if this is a useful links message sent by the bot
+            if message.author == bot.user and message.embeds:
+                if message.embeds[0].title and "🔗 Useful Links & Resources" in message.embeds[0].title:
+                    try:
+                        await message.delete()
+                        deleted_count += 1
+                        print(f"🗑️ Deleted old pinned useful links message from #{target_channel.name}")
+                        # Small delay to avoid rate limiting
+                        await asyncio.sleep(0.2)
+                    except Exception as delete_error:
+                        print(f"⚠️ Could not delete useful links message in #{target_channel.name}: {delete_error}")
+        
+        if deleted_count > 0:
+            print(f"✅ Cleaned up {deleted_count} old useful links message(s)")
 
         # Create embed for the useful links
         embed = discord.Embed(
