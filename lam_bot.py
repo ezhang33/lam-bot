@@ -5109,9 +5109,9 @@ async def active_tickets_command(interaction: discord.Interaction):
         traceback.print_exc()
 
 
-@bot.tree.command(name="sendtestmaterials", description="Send test materials to all event channels (Admin only)")
-async def send_test_materials_command(interaction: discord.Interaction):
-    """Manually trigger test materials search and sharing for all events"""
+@bot.tree.command(name="sendallmaterials", description="Send all materials to all channels (Admin only)")
+async def send_all_materials_command(interaction: discord.Interaction):
+    """Manually trigger materials search and sharing for all events, useful links, and runner"""
     # Admin only
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
@@ -5210,6 +5210,22 @@ async def send_test_materials_command(interaction: discord.Interaction):
                     await asyncio.sleep(0.5)
                 except Exception as e:
                     print(f"⚠️ Error sending test materials for {role_name}: {e}")
+
+            # Release useful links
+            try:
+                print("🔗 Releasing useful links...")
+                await search_and_share_useful_links(guild)
+                print("✅ Useful links released")
+            except Exception as useful_links_error:
+                print(f"⚠️ Error releasing useful links: {useful_links_error}")
+
+            # Release runner info
+            try:
+                print("🏃 Releasing runner info...")
+                await search_and_share_runner_info(guild)
+                print("✅ Runner info released")
+            except Exception as runner_info_error:
+                print(f"⚠️ Error releasing runner info: {runner_info_error}")
 
             result_embed = discord.Embed(
                 title="✅ All Test Materials Sent",
@@ -5354,10 +5370,18 @@ async def clear_cache_command(interaction: discord.Interaction):
             await interaction.followup.send(f"❌ Error clearing cache: {str(e)}")
             print(f"❌ Clear cache error: {e}")
 
-@bot.tree.command(name="releaseeventtest", description="Send test materials for a specific event (Admin only)")
-@app_commands.describe(event_name="Event you want to release tests for")
-async def release_event_test_command(interaction: discord.Interaction, event_name: str):
-    """Release Event Test Command 1"""
+@bot.tree.command(name="sendsingularmaterial", description="Send material for a specific type (Admin only)")
+@app_commands.describe(
+    material_type="Type of material to send (event, useful-links, or runner)",
+    event_name="Event name (only needed if material_type is 'event')"
+)
+@app_commands.choices(material_type=[
+    app_commands.Choice(name="Event Test Materials", value="event"),
+    app_commands.Choice(name="Useful Links", value="useful-links"),
+    app_commands.Choice(name="Runner Info", value="runner")
+])
+async def send_singular_material_command(interaction: discord.Interaction, material_type: app_commands.Choice[str], event_name: str = None):
+    """Send materials for a specific type (event, useful-links, or runner)"""
 
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
@@ -5374,8 +5398,9 @@ async def release_event_test_command(interaction: discord.Interaction, event_nam
 
         try:
             guild = interaction.guild
+            material_value = material_type.value
 
-            print(f"📚 Manual test materials request by {interaction.user} for {event_name}")
+            print(f"📚 Manual material request by {interaction.user} for {material_value}")
 
             # Check if we have a spreadsheet connected
             guild_id = guild.id
@@ -5387,45 +5412,90 @@ async def release_event_test_command(interaction: discord.Interaction, event_nam
                 )
                 return
 
-            # Get all roles in the server
-            priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+            # Handle event materials
+            if material_value == "event":
+                if not event_name:
+                    await interaction.followup.send(
+                        "❌ Event name is required when sending event test materials!",
+                        ephemeral=True
+                    )
+                    return
 
-            if (event_name not in guild.roles and
-                event_name in priority_roles and
-                event_name in chapter_role_names):
+                # Get all roles in the server
+                priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+
+                if (event_name not in [role.name for role in guild.roles] and
+                    event_name in priority_roles and
+                    event_name in chapter_role_names):
+                    await interaction.followup.send(
+                        "❌ This event does not exist in this server or is not an appropriate argument!",
+                        ephemeral=True
+                    )
+                    return
+
+                # Send initial status
                 await interaction.followup.send(
-                    "❌ This event does not exist in this server or is not an appropriate argument!",
+                    f"🔍 Searching for test materials for {event_name}...\n\n"
+                    f"This may take a while. Check the event channels for results.",
                     ephemeral=True
                 )
-                return
 
-            # Send initial status
-            await interaction.followup.send(
-                f"🔍 Searching for test materials for {event_name}...\n\n"
-                f"This may take a while. Check the event channels for results.",
-                ephemeral=True
-            )
+                try:
+                    print(f"📚 Searching test materials for: {event_name}")
+                    await search_and_share_test_folder(guild, event_name)
+                    await asyncio.sleep(0.5)
+                    print(f"✅ Test materials sent for {event_name}")
+                except Exception as e:
+                    print(f"⚠️ Error sending test materials for {event_name}: {e}")
+                    await interaction.followup.send(f"❌ Error: {str(e)}", ephemeral=True)
+                    return
 
-            # Loop through all event roles and send test materials
-            try:
-                print(f"📚 Searching test materials for: {event_name}")
-                await search_and_share_test_folder(guild, event_name)
-                # Small delay to avoid rate limiting
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                print(f"⚠️ Error sending test materials for {event_name}: {e}")
+            # Handle useful links
+            elif material_value == "useful-links":
+                await interaction.followup.send(
+                    "🔗 Searching for useful links...\n\n"
+                    "This may take a moment.",
+                    ephemeral=True
+                )
+
+                try:
+                    print("🔗 Releasing useful links...")
+                    await search_and_share_useful_links(guild)
+                    print("✅ Useful links released")
+                except Exception as e:
+                    print(f"⚠️ Error releasing useful links: {e}")
+                    await interaction.followup.send(f"❌ Error: {str(e)}", ephemeral=True)
+                    return
+
+            # Handle runner info
+            elif material_value == "runner":
+                await interaction.followup.send(
+                    "🏃 Searching for runner info...\n\n"
+                    "This may take a moment.",
+                    ephemeral=True
+                )
+
+                try:
+                    print("🏃 Releasing runner info...")
+                    await search_and_share_runner_info(guild)
+                    print("✅ Runner info released")
+                except Exception as e:
+                    print(f"⚠️ Error releasing runner info: {e}")
+                    await interaction.followup.send(f"❌ Error: {str(e)}", ephemeral=True)
+                    return
 
             result_embed = discord.Embed(
-                title=f"✅ All Test materials send for {event_name}",
-                description=f"The server has completed the task to send test materials for {event_name}!",
+                title=f"✅ Material Sent Successfully",
+                description=f"Successfully sent {material_type.name}!",
                 color=discord.Color.green()
             )
 
-            print(f"✅ Test materials command completed for {event_name}")
+            await interaction.followup.send(embed=result_embed, ephemeral=True)
+            print(f"✅ Material command completed for {material_value}")
 
         except Exception as e:
-            await interaction.followup.send(f"❌ Error sending test materials for {event_name}: {str(e)}", ephemeral=True)
-            print(f"❌ Send test materials error for {event_name}: {e}")
+            await interaction.followup.send(f"❌ Error sending materials: {str(e)}", ephemeral=True)
+            print(f"❌ Send materials error: {e}")
             import traceback
             traceback.print_exc()
 
