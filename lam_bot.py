@@ -1123,6 +1123,172 @@ async def search_and_share_useful_links(guild):
     except Exception as e:
         print(f"❌ Error searching for Useful Links folder: {e}")
 
+async def search_and_share_runner_info(guild):
+    """Search for Runner folder and share with runner channel"""
+    try:
+        guild_id = guild.id
+        print(f"🔍 DEBUG: Searching for Runner folder for guild {guild_id}")
+
+        # Check if we have a connected spreadsheet to get the folder ID
+        if guild_id not in spreadsheets:
+            print(f"❌ DEBUG: No spreadsheet connected for guild {guild_id}, cannot search for Runner folder")
+            return
+
+        guild_spreadsheet = spreadsheets[guild_id]
+        print(f"✅ DEBUG: Spreadsheet connected, ID: {guild_spreadsheet.id}")
+
+        # Import Drive API
+        from googleapiclient.discovery import build
+
+        # Build Drive API service
+        drive_service = build('drive', 'v3', credentials=creds)
+
+        # Get the parent folder ID of the connected spreadsheet
+        sheet_metadata = drive_service.files().get(fileId=guild_spreadsheet.id, fields='parents').execute()
+        parent_folders = sheet_metadata.get('parents', [])
+
+        if not parent_folders:
+            print(f"❌ DEBUG: Could not find parent folder for the spreadsheet")
+            return
+
+        parent_folder_id = parent_folders[0]
+        print(f"✅ DEBUG: Found parent folder ID: {parent_folder_id}")
+
+        # Search for "Runner" folder in the parent directory
+        runner_query = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and name='Runner'"
+        runner_results = drive_service.files().list(q=runner_query, fields='files(id, name, webViewLink)').execute()
+        runner_folders = runner_results.get('files', [])
+
+        if not runner_folders:
+            print(f"❌ DEBUG: No 'Runner' folder found in the parent directory")
+            return
+
+        runner_folder = runner_folders[0]
+        runner_folder_id = runner_folder['id']
+        print(f"✅ DEBUG: Found Runner folder: {runner_folder_id}")
+
+        # Get all files in the Runner folder
+        files_query = f"'{runner_folder_id}' in parents and trashed=false"
+        files_results = drive_service.files().list(q=files_query, fields='files(id, name, webViewLink, mimeType)').execute()
+        files = files_results.get('files', [])
+
+        if not files:
+            print(f"❌ DEBUG: No files found in Runner folder")
+            return
+
+        print(f"✅ DEBUG: Found {len(files)} files in Runner folder")
+
+        # Find the runner channel
+        target_channel = discord.utils.get(guild.text_channels, name="runner")
+
+        if not target_channel:
+            print(f"❌ DEBUG: Could not find runner channel")
+            return
+
+        print(f"✅ DEBUG: Found target channel: #{target_channel.name}")
+
+        # Delete old pinned runner info messages from the bot
+        pinned_messages = await safe_call(target_channel.pins())
+        deleted_count = 0
+        
+        for message in pinned_messages:
+            # Check if this is a runner info message sent by the bot
+            if message.author == bot.user and message.embeds:
+                if message.embeds[0].title and "🏃 Runner Information & Resources" in message.embeds[0].title:
+                    try:
+                        await message.delete()
+                        deleted_count += 1
+                        print(f"🗑️ Deleted old pinned runner info message from #{target_channel.name}")
+                        # Small delay to avoid rate limiting
+                        await asyncio.sleep(0.2)
+                    except Exception as delete_error:
+                        print(f"⚠️ Could not delete runner info message in #{target_channel.name}: {delete_error}")
+        
+        if deleted_count > 0:
+            print(f"✅ Cleaned up {deleted_count} old runner info message(s)")
+
+        # Create embed for the runner info
+        embed = discord.Embed(
+            title="🏃 Runner Information & Resources",
+            description="Access important information and resources for runners!",
+            color=discord.Color.blue()
+        )
+
+        # Create file links as bullet points
+        file_links = []
+        for file in files:
+            file_name = file['name']
+            file_link = file['webViewLink']
+
+            # Determine file type emoji
+            mime_type = file.get('mimeType', '')
+            if 'pdf' in mime_type:
+                emoji = "📄"
+            elif 'document' in mime_type:
+                emoji = "📝"
+            elif 'spreadsheet' in mime_type:
+                emoji = "📊"
+            elif 'presentation' in mime_type:
+                emoji = "📖"
+            elif 'image' in mime_type:
+                emoji = "🖼️"
+            elif 'folder' in mime_type:
+                emoji = "📁"
+            else:
+                emoji = "📎"
+
+            file_links.append(f"• {emoji} [**{file_name}**]({file_link})")
+
+        # Split into chunks if too long for Discord (1024 character limit per field)
+        # Discord's limit is 1024 chars per field, so we use 1000 to be safe
+        chunk_size = 1000
+        chunks = []
+        current_chunk = ""
+
+        for link in file_links:
+            # Check if adding this link would exceed the limit
+            if len(current_chunk + link + "\n") > chunk_size:
+                # Save current chunk and start a new one
+                if current_chunk.strip():
+                    chunks.append(current_chunk.strip())
+                current_chunk = link + "\n"
+            else:
+                current_chunk += link + "\n"
+
+        # Don't forget the last chunk
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+
+        # Send the first message with the main embed
+        embed.add_field(name="📋 Runner Info", value=chunks[0] if chunks else "No files found", inline=False)
+        message = await target_channel.send(embed=embed)
+        print(f"🏃 Shared runner info in #{target_channel.name}")
+
+        # Pin the first message
+        try:
+            await safe_call(message.pin())
+            print(f"📌 Pinned runner info message in #{target_channel.name}")
+        except discord.Forbidden:
+            print(f"⚠️ No permission to pin message in #{target_channel.name}")
+        except Exception as pin_error:
+            print(f"⚠️ Error pinning message in #{target_channel.name}: {pin_error}")
+
+        # Send additional messages for remaining chunks
+        if len(chunks) > 1:
+            for i, chunk in enumerate(chunks[1:], start=2):
+                continuation_embed = discord.Embed(
+                    title=f"🏃 Runner Information & Resources (continued {i})",
+                    description="",
+                    color=discord.Color.blue()
+                )
+                continuation_embed.add_field(name="📋 Runner Info", value=chunk, inline=False)
+                await target_channel.send(embed=continuation_embed)
+                print(f"🏃 Sent continuation message {i} for runner info")
+                await asyncio.sleep(0.5)
+
+    except Exception as e:
+        print(f"❌ Error searching for Runner folder: {e}")
+
 async def add_runner_access(channel, runner_role):
     """Add Runner role access to a channel"""
     if not channel or not runner_role:
@@ -3337,6 +3503,17 @@ async def enter_folder_command(interaction: discord.Interaction, folder_link: st
                 except Exception as useful_links_error:
                     print(f"⚠️ Error searching for useful links: {useful_links_error}")
                     # Don't fail the whole command if useful links search fails
+
+                # Search for and share runner info after successful template connection
+                try:
+                    guild = interaction.guild
+                    if guild:
+                        print("🏃 Searching for runner info after template connection...")
+                        await search_and_share_runner_info(guild)
+                        print("✅ Runner info search completed")
+                except Exception as runner_info_error:
+                    print(f"⚠️ Error searching for runner info: {runner_info_error}")
+                    # Don't fail the whole command if runner info search fails
 
             except Exception as e:
                 await interaction.followup.send(f"❌ Error accessing sheet data: {str(e)}", ephemeral=True)
