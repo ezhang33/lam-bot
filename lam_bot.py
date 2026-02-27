@@ -9,6 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import json
+import random
 
 load_dotenv()
 
@@ -2782,13 +2783,22 @@ async def check_for_burger_request(thread):
                 return
             
             try:
-                # Send burger emoji DM
-                await ticket_creator.send("🍔")
-                print(f"✅ Sent burger emoji DM to {ticket_creator}")
+                # Send 55 burgers one by one with random delays
+                for burger_num in range(1, 56):
+                    # Send burger emoji DM
+                    await ticket_creator.send("🍔")
+                    
+                    # Send counter message
+                    await ticket_creator.send(f"burger {burger_num} of 55")
+                    print(f"✅ Sent burger {burger_num} of 55 to {ticket_creator}")
+                    
+                    # Wait random time between 5-60 seconds before next burger (except after the last one)
+                    if burger_num < 55:
+                        delay = random.uniform(5, 60)
+                        print(f"⏱️ Waiting {delay:.1f} seconds before next burger...")
+                        await asyncio.sleep(delay)
                 
-                # Send "burger 1 of 55" message
-                await ticket_creator.send("burger 1 of 55")
-                print(f"✅ Sent 'burger 1 of 55' DM to {ticket_creator}")
+                print(f"🎉 Completed sending all 55 burgers to {ticket_creator}")
                 
             except discord.Forbidden:
                 print(f"⚠️ Cannot DM {ticket_creator} - they may have DMs disabled")
