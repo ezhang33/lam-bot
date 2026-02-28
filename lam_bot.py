@@ -4733,13 +4733,13 @@ async def assign_runner_zones_command(interaction: discord.Interaction):
             building = str(lower_row.get("building", lower_row.get("building 1", ""))).strip()
             name = str(lower_row.get("name", "")).strip()
             email = str(lower_row.get("email", "")).strip().lower()
-            zone = str(lower_row.get("zone", "")).strip()
             
             if not building or not name:
                 continue
             
-            # Check if this row has a zone assigned (meaning they're a runner for this building)
-            is_runner = bool(zone)
+            # Check if this row was assigned a zone (meaning they're a runner for this building)
+            is_runner = any(row_idx == idx for row_idx, _ in updates)
+            
             
             if is_runner:
                 discord_id = email_to_discord.get(email)
