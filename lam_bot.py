@@ -4744,25 +4744,36 @@ async def assign_runner_zones_command(interaction: discord.Interaction):
                 except ValueError:
                     pass
         
-        # Second pass: find all runners and their zones
+        # Second pass: find all runners and their zones from Runner Zone column
         zone_runners = defaultdict(list)  # zone -> [(name, discord_id)]
+        
+        # Debug: print available columns
+        if rows:
+            first_row = rows[0]
+            lower_first = {(k.strip().lower() if isinstance(k, str) else k): v for k, v in first_row.items()}
+            print(f"🔍 DEBUG: Available columns: {list(lower_first.keys())}")
         
         for idx, row in enumerate(rows, start=2):
             lower_row = {(k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items()}
             name = str(lower_row.get("name", "")).strip()
             email = str(lower_row.get("email", "")).strip().lower()
-            zone_raw = str(lower_row.get("zone number", lower_row.get("zone", ""))).strip()
-            building = str(lower_row.get("building", lower_row.get("building 1", ""))).strip()
             
-            # If this row has a name/email and zone (and no building, or is not a building row), it's a runner
-            if name and zone_raw and building not in building_zones:
+            # Use "Runner Zone" column specifically (NOT "Zone Number")
+            runner_zone_raw = str(lower_row.get("runner zone", "")).strip()
+            
+            # Debug first few rows
+            if name and idx <= 10:
+                print(f"🔍 Row {idx}: name={name}, email={email}, runner_zone={runner_zone_raw}")
+            
+            # If this row has a name and runner zone, it's a runner
+            if name and runner_zone_raw:
                 try:
-                    zone_num = int(zone_raw)
+                    zone_num = int(runner_zone_raw)
                     discord_id = email_to_discord.get(email)
                     zone_runners[zone_num].append((name, discord_id))
-                    print(f"🏃 Found runner: {name} → Zone {zone_num}")
+                    print(f"🏃 Found runner: {name} (email: {email}) → Zone {zone_num}")
                 except ValueError:
-                    pass
+                    print(f"⚠️ Could not parse runner zone '{runner_zone_raw}' for {name}")
         
         # Match runners to buildings by zone
         building_runners = defaultdict(list)  # building -> [(name, discord_id)]
