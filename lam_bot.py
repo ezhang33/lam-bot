@@ -4725,25 +4725,53 @@ async def assign_runner_zones_command(interaction: discord.Interaction):
                 except ValueError:
                     pass
         
-        # Group runners by building (without zones)
-        building_runners = defaultdict(list)  # building -> [(name, discord_id)]
+        # First pass: find all buildings and their zones
+        building_zones = {}  # building -> zone_number
+        zone_buildings = defaultdict(list)  # zone -> [building names]
         
         for idx, row in enumerate(rows, start=2):
             lower_row = {(k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items()}
             building = str(lower_row.get("building", lower_row.get("building 1", ""))).strip()
+            zone_raw = str(lower_row.get("zone number", lower_row.get("zone", ""))).strip()
+            
+            # If this row has a building and zone, it's a building definition
+            if building and zone_raw:
+                try:
+                    zone_num = int(zone_raw)
+                    building_zones[building] = zone_num
+                    zone_buildings[zone_num].append(building)
+                    print(f"📍 Found building: {building} → Zone {zone_num}")
+                except ValueError:
+                    pass
+        
+        # Second pass: find all runners and their zones
+        zone_runners = defaultdict(list)  # zone -> [(name, discord_id)]
+        
+        for idx, row in enumerate(rows, start=2):
+            lower_row = {(k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items()}
             name = str(lower_row.get("name", "")).strip()
             email = str(lower_row.get("email", "")).strip().lower()
+            zone_raw = str(lower_row.get("zone number", lower_row.get("zone", ""))).strip()
+            building = str(lower_row.get("building", lower_row.get("building 1", ""))).strip()
             
-            if not building or not name:
-                continue
-            
-            # Check if this row was assigned a zone (meaning they're a runner for this building)
-            is_runner = any(row_idx == idx for row_idx, _ in updates)
-            
-            
-            if is_runner:
-                discord_id = email_to_discord.get(email)
-                building_runners[building].append((name, discord_id))
+            # If this row has a name/email and zone (and no building, or is not a building row), it's a runner
+            if name and zone_raw and building not in building_zones:
+                try:
+                    zone_num = int(zone_raw)
+                    discord_id = email_to_discord.get(email)
+                    zone_runners[zone_num].append((name, discord_id))
+                    print(f"🏃 Found runner: {name} → Zone {zone_num}")
+                except ValueError:
+                    pass
+        
+        # Match runners to buildings by zone
+        building_runners = defaultdict(list)  # building -> [(name, discord_id)]
+        
+        for building, zone_num in building_zones.items():
+            # Get all runners for this zone
+            runners_in_zone = zone_runners.get(zone_num, [])
+            building_runners[building] = runners_in_zone
+            print(f"✅ Matched {len(runners_in_zone)} runners to building {building} (zone {zone_num})")
         
         # Send message to each building channel
         messages_sent = 0
