@@ -436,6 +436,7 @@ async def get_or_create_category(guild, category_name):
 
 async def get_or_create_channel(guild, channel_name, category, event_role=None, is_building_chat=False):
     """Get a channel by name, or create it if it doesn't exist"""
+    global runner_all_access
     channel = discord.utils.get(guild.text_channels, name=channel_name)
     if channel:
         print(f"✅ DEBUG: Found existing channel: #{channel_name} (ID: {channel.id})")
@@ -2356,6 +2357,7 @@ async def setup_ezhang_admin_role(guild):
 
 @bot.event
 async def on_ready():
+    global runner_all_access
     async with admin_lock:
 
         print(f"Logged in as {bot.user} (ID: {bot.user.id})")
@@ -2409,6 +2411,7 @@ async def on_ready():
 @bot.event
 async def on_guild_join(guild):
     """Handle setup when bot joins a new guild"""
+    global runner_all_access
     async with admin_lock:
 
         print(f"🎉 Bot joined new guild: {guild.name} (ID: {guild.id}) - {guild.member_count} members")
@@ -5680,6 +5683,7 @@ async def send_singular_material_command(interaction: discord.Interaction, mater
 )
 async def set_runner_all_access_command(interaction: discord.Interaction, runner_access: int):
     """Set Runner All Access Command"""
+    global runner_all_access
 
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
@@ -5687,7 +5691,6 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
         return
     
     if (runner_access != runner_all_access):
-        global runner_all_access
         guild = interaction.guild
         runner_all_access = runner_access
         try:
