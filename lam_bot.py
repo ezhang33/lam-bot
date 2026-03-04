@@ -73,6 +73,7 @@ admin_lock = asyncio.Lock()
 rate_limit_lock = asyncio.Lock()
 reset_active = False
 
+
 ALLOWED_DURING_RESET = {"enterfolder"}
 
 #Setting bits for the server
@@ -5686,6 +5687,7 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
         return
     
     if (runner_access != runner_all_access):
+        global runner_all_access
         guild = interaction.guild
         runner_all_access = runner_access
         try:
