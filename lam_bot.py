@@ -5675,10 +5675,10 @@ async def send_singular_material_command(interaction: discord.Interaction, mater
 
 @bot.tree.command(name="set_runner_all_access", description="Set if runners get all access to roles")
 @app_commands.describe(
-    runner_access="1 for all access 0 for no building access",
+    runner_access="Setting 1 for all access 0 for no building access",
 )
 async def set_runner_all_access_command(interaction: discord.Interaction, runner_access: int):
-    """Set Runner All Access Command 2"""
+    """Set Runner All Access Command"""
 
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
@@ -5714,8 +5714,6 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
 
         except discord.Forbidden:
             print(f"❌ Error with giving or removing runner access to all channels")
-            return None
-
 
 
 @bot.tree.command(name="dummy3", description="Dummy 3 (Admin only)")
