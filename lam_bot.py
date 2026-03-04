@@ -2376,8 +2376,8 @@ async def on_ready():
                 await move_bot_role_to_top_for_guild(guild)
                 print(f"🎭 Organizing role hierarchy for {guild.name}...")
                 await organize_role_hierarchy_for_guild(guild)
-                print(f"🚫 Removing Runner access from building channels for {guild.name}...")
-                await remove_runner_access_from_building_channels_for_guild(guild)
+                #print(f"🚫 Removing Runner access from building channels for {guild.name}...")
+                #await remove_runner_access_from_building_channels_for_guild(guild)
                 print(f"🔑 Adding Runner access to static channels for {guild.name}...")
                 await give_runner_access_to_all_channels_for_guild(guild)
 
@@ -2427,7 +2427,7 @@ async def on_guild_join(guild):
             await setup_static_channels_for_guild(guild)
             await move_bot_role_to_top_for_guild(guild)
             await organize_role_hierarchy_for_guild(guild)
-            await remove_runner_access_from_building_channels_for_guild(guild)
+            #await remove_runner_access_from_building_channels_for_guild(guild)
             await give_runner_access_to_all_channels_for_guild(guild)
             await setup_ezhang_admin_role(guild)
 
