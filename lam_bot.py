@@ -75,6 +75,9 @@ reset_active = False
 
 ALLOWED_DURING_RESET = {"enterfolder"}
 
+#Setting bits for the server
+runner_all_access = 1
+
 async def safe_call(coro):
     async with rate_limit_lock:
         result = await coro
@@ -607,7 +610,7 @@ async def setup_building_structure(guild, building, first_event, room=None):
         if event_role:
             # Skip giving building chat access to Runner role
             # (Runners use the existing "runner" channel in Tournament Officials)
-            if first_event.lower() != "runner":
+            if first_event.lower() != "runner" or runner_all_access == 1:
                 # Add the event role to the building chat permissions
                 await add_role_to_building_chat(building_chat, event_role)
 
@@ -5668,14 +5671,22 @@ async def send_singular_material_command(interaction: discord.Interaction, mater
             traceback.print_exc()
 
 
-@bot.tree.command(name="dummy2", description="Dummy 2 (Admin only)")
-async def dummy2_command(interaction: discord.Interaction):
-    """Dummy Command 2"""
+@bot.tree.command(name="set_runner_all_access", description="Set if runners get all access to roles")
+@app_commands.describe(
+    runner_access="1 for all access 0 for no building access",
+)
+async def set_runner_all_access_command(interaction: discord.Interaction, runner_access: int):
+    """Set Runner All Access Command 2"""
 
     # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
+    access = ""
+    if not runner_access:
+        access = "not "
+    print(f"Rerun enterfolder for this to take into affect. Runner access will get " + access +"access to all channels")
+    runner_all_access = runner_access
 
 @bot.tree.command(name="dummy3", description="Dummy 3 (Admin only)")
 async def dummy3_command(interaction: discord.Interaction):
