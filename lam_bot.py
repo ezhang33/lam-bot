@@ -5702,12 +5702,19 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
             # Give Runner role access only to static channels (not building/event channels)
             runner_role = discord.utils.get(guild.roles, name="Runner")
             static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
-            if runner_all_access or category.name in static_categories:
+            if (runner_all_access):
                 overwrites[runner_role] = discord.PermissionOverwrite(
                     read_messages=True,
                     send_messages=True,
                     read_message_history=True
                 )
+            else:
+                overwrites[runner_role] = discord.PermissionOverwrite(
+                    read_messages=False,
+                    send_messages=True,
+                    read_message_history=True
+                )
+            
             building_categories = category - static_categories
 
             for building in building_categories:
