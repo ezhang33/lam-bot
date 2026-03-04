@@ -5681,7 +5681,7 @@ async def send_singular_material_command(interaction: discord.Interaction, mater
 @app_commands.describe(
     runner_access="Setting 1 for all access 0 for no building access",
 )
-async def set_runner_all_access_command(interaction: discord.Interaction, runner_access: int):
+async def set_runner_all_access_command(interaction: discord.Interaction, runner_access: str):
     """Set Runner All Access Command"""
     global runner_all_access
 
@@ -5690,9 +5690,10 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
     
-    if (runner_access != runner_all_access):
+    int_runner_access = str(runner_access)
+    if (int_runner_access != runner_all_access):
         guild = interaction.guild
-        runner_all_access = runner_access
+        runner_all_access = int_runner_access
         try:
             # Set up permissions
             overwrites = {}
