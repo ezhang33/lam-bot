@@ -5681,7 +5681,7 @@ async def send_singular_material_command(interaction: discord.Interaction, mater
 @app_commands.describe(
     runner_access="Setting 1 for all access 0 for no building access",
 )
-async def set_runner_all_access_command(interaction: discord.Interaction, runner_access: str):
+async def set_runner_all_access_command(interaction: discord.Interaction, runner_access: int):
     """Set Runner All Access Command"""
     global runner_all_access
 
@@ -5690,41 +5690,39 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
     
-    int_runner_access = str(runner_access)
-    if (int_runner_access != runner_all_access):
+    if (runner_access != runner_all_access):
         guild = interaction.guild
-        runner_all_access = int_runner_access
+        runner_all_access = runner_access
         try:
             # Set up permissions
-            overwrites = {}
 
             category = guild.categories
 
             # Give Runner role access only to static channels (not building/event channels)
             runner_role = discord.utils.get(guild.roles, name="Runner")
             static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
-            if (runner_all_access):
-                overwrites[runner_role] = discord.PermissionOverwrite(
-                    read_messages=True,
-                    send_messages=True,
-                    read_message_history=True
-                )
-            else:
-                overwrites[runner_role] = discord.PermissionOverwrite(
-                    read_messages=False,
-                    send_messages=True,
-                    read_message_history=True
-                )
-            
 
             for building in category:
                 if (building.name not in static_categories):
                     for room in building.channels:
+                        overwrites = room.overwrites
+
+                        if (runner_all_access):
+                            overwrites[runner_role] = discord.PermissionOverwrite(
+                                read_messages=True,
+                                send_messages=True,
+                                read_message_history=True
+                            )
+                        else:
+                            # Remove Runner overwrite entirely instead of forcing read=False
+                            if runner_role in overwrites:
+                                del overwrites[runner_role]
+
                         await handle_rate_limit(
                             room.edit(overwrites=overwrites, reason=f"Added {runner_role.name} access to all channels"),
                             f"editing channel '{room.name}' permissions"
                         )
-
+            
         except discord.Forbidden:
             print(f"❌ Error with giving or removing runner access to all channels")
 
