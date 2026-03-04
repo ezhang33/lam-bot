@@ -449,7 +449,7 @@ async def get_or_create_channel(guild, channel_name, category, event_role=None, 
         # Give Runner role access only to static channels (not building/event channels)
         runner_role = discord.utils.get(guild.roles, name="Runner")
         static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
-        if runner_role and category and category.name in static_categories:
+        if runner_role and category and (runner_all_access or category.name in static_categories):
             overwrites[runner_role] = discord.PermissionOverwrite(
                 read_messages=True,
                 send_messages=True,
@@ -610,7 +610,7 @@ async def setup_building_structure(guild, building, first_event, room=None):
         if event_role:
             # Skip giving building chat access to Runner role
             # (Runners use the existing "runner" channel in Tournament Officials)
-            if first_event.lower() != "runner" or runner_all_access == 1:
+            if first_event.lower() != "runner":
                 # Add the event role to the building chat permissions
                 await add_role_to_building_chat(building_chat, event_role)
 
@@ -2379,8 +2379,9 @@ async def on_ready():
                 await move_bot_role_to_top_for_guild(guild)
                 print(f"🎭 Organizing role hierarchy for {guild.name}...")
                 await organize_role_hierarchy_for_guild(guild)
-                #print(f"🚫 Removing Runner access from building channels for {guild.name}...")
-                #await remove_runner_access_from_building_channels_for_guild(guild)
+                if not runner_all_access:
+                    print(f"🚫 Removing Runner access from building channels for {guild.name}...")
+                    await remove_runner_access_from_building_channels_for_guild(guild)
                 print(f"🔑 Adding Runner access to static channels for {guild.name}...")
                 await give_runner_access_to_all_channels_for_guild(guild)
 
@@ -2430,7 +2431,8 @@ async def on_guild_join(guild):
             await setup_static_channels_for_guild(guild)
             await move_bot_role_to_top_for_guild(guild)
             await organize_role_hierarchy_for_guild(guild)
-            #await remove_runner_access_from_building_channels_for_guild(guild)
+            if not runner_all_access:
+                await remove_runner_access_from_building_channels_for_guild(guild)
             await give_runner_access_to_all_channels_for_guild(guild)
             await setup_ezhang_admin_role(guild)
 
@@ -3592,26 +3594,26 @@ async def enter_folder_command(interaction: discord.Interaction, folder_link: st
                 print(f"✅ Successfully switched to sheet: {found_sheet.title}")
 
                 # Search for and share useful links after successful template connection
-                try:
-                    guild = interaction.guild
-                    if guild:
-                        print("🔗 Searching for useful links after template connection...")
-                        await search_and_share_useful_links(guild)
-                        print("✅ Useful links search completed")
-                except Exception as useful_links_error:
-                    print(f"⚠️ Error searching for useful links: {useful_links_error}")
-                    # Don't fail the whole command if useful links search fails
+                # try:
+                #     guild = interaction.guild
+                #     if guild:
+                #         print("🔗 Searching for useful links after template connection...")
+                #         await search_and_share_useful_links(guild)
+                #         print("✅ Useful links search completed")
+                # except Exception as useful_links_error:
+                #     print(f"⚠️ Error searching for useful links: {useful_links_error}")
+                #     # Don't fail the whole command if useful links search fails
 
                 # Search for and share runner info after successful template connection
-                try:
-                    guild = interaction.guild
-                    if guild:
-                        print("🏃 Searching for runner info after template connection...")
-                        await search_and_share_runner_info(guild)
-                        print("✅ Runner info search completed")
-                except Exception as runner_info_error:
-                    print(f"⚠️ Error searching for runner info: {runner_info_error}")
-                    # Don't fail the whole command if runner info search fails
+                # try:
+                #     guild = interaction.guild
+                #     if guild:
+                #         print("🏃 Searching for runner info after template connection...")
+                #         await search_and_share_runner_info(guild)
+                #         print("✅ Runner info search completed")
+                # except Exception as runner_info_error:
+                #     print(f"⚠️ Error searching for runner info: {runner_info_error}")
+                #     # Don't fail the whole command if runner info search fails
 
             except Exception as e:
                 await interaction.followup.send(f"❌ Error accessing sheet data: {str(e)}", ephemeral=True)
