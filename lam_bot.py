@@ -5684,11 +5684,39 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
-    access = ""
-    if not runner_access:
-        access = "not "
-    print(f"Rerun enterfolder for this to take into affect. Runner access will get " + access +"access to all channels")
-    runner_all_access = runner_access
+    
+    if (runner_access != runner_all_access):
+        guild = interaction.guild
+        runner_all_access = runner_access
+        try:
+            # Set up permissions
+            overwrites = {}
+
+            category = guild.categories
+
+            # Give Runner role access only to static channels (not building/event channels)
+            runner_role = discord.utils.get(guild.roles, name="Runner")
+            static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
+            if runner_all_access or category.name in static_categories:
+                overwrites[runner_role] = discord.PermissionOverwrite(
+                    read_messages=True,
+                    send_messages=True,
+                    read_message_history=True
+                )
+            building_categories = category - static_categories
+
+            for building in building_categories:
+                for room in building.channels:
+                    await handle_rate_limit(
+                        room.edit(overwrites=overwrites, reason=f"Added {runner_role.name} access to all channels"),
+                        f"editing channel '{room.name}' permissions"
+                    )
+
+        except discord.Forbidden:
+            print(f"❌ Error with giving or removing runner access to all channels")
+            return None
+
+
 
 @bot.tree.command(name="dummy3", description="Dummy 3 (Admin only)")
 async def dummy3_command(interaction: discord.Interaction):
