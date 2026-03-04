@@ -5715,14 +5715,14 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
                     read_message_history=True
                 )
             
-            building_categories = category - static_categories
 
-            for building in building_categories:
-                for room in building.channels:
-                    await handle_rate_limit(
-                        room.edit(overwrites=overwrites, reason=f"Added {runner_role.name} access to all channels"),
-                        f"editing channel '{room.name}' permissions"
-                    )
+            for building in category:
+                if (building.name not in static_categories):
+                    for room in building.channels:
+                        await handle_rate_limit(
+                            room.edit(overwrites=overwrites, reason=f"Added {runner_role.name} access to all channels"),
+                            f"editing channel '{room.name}' permissions"
+                        )
 
         except discord.Forbidden:
             print(f"❌ Error with giving or removing runner access to all channels")
