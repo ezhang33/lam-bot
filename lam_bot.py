@@ -5726,15 +5726,92 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
         except discord.Forbidden:
             print(f"❌ Error with giving or removing runner access to all channels")
 
+@bot.tree.command(name="refreshnicknames", description="Reapply nicknames for all users with a Discord ID (Admin only)")
+async def refresh_nicknames_command(interaction: discord.Interaction):
 
-@bot.tree.command(name="dummy3", description="Dummy 3 (Admin only)")
-async def dummy3_command(interaction: discord.Interaction):
-    """Dummy Command 3"""
-
-    # Check if user has administrator permission
+    # Admin check
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ You need administrator permissions to use this command!",
+            ephemeral=True
+        )
         return
+
+    await interaction.response.defer(ephemeral=True)
+
+    guild = interaction.guild
+    guild_id = guild.id
+
+    if guild_id not in spreadsheets:
+        await interaction.followup.send(
+            "❌ No spreadsheet connected for this server.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        spreadsheet = spreadsheets[guild_id]
+        sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
+        data = sheet.get_all_records()
+
+        updated_count = 0
+        skipped_count = 0
+
+        for row in data:
+
+            discord_identifier = str(row.get("Discord ID", "")).strip()
+            if not discord_identifier:
+                continue
+
+            try:
+                discord_id = int(discord_identifier)
+            except ValueError:
+                continue
+
+            member = guild.get_member(discord_id)
+            if not member:
+                continue
+
+            user_name = str(row.get("Name", "")).strip()
+            first_event = str(row.get("First Event", "")).strip()
+
+            if not user_name or not first_event:
+                skipped_count += 1
+                continue
+
+            # Construct nickname exactly like login_command
+            nickname = f"{user_name} ({first_event})"
+
+            if len(nickname) > 32:
+                nickname = nickname[:32]
+
+            try:
+                await handle_rate_limit(
+                    member.edit(nick=nickname, reason="Admin nickname refresh"),
+                    f"editing nickname for {member}"
+                )
+
+                updated_count += 1
+                print(f"📝 Updated nickname for {member} -> {nickname}")
+
+            except discord.Forbidden:
+                print(f"❌ No permission to change nickname for {member}")
+
+            except Exception as e:
+                print(f"⚠️ Error updating nickname for {member}: {e}")
+
+        await interaction.followup.send(
+            f"✅ Nickname refresh complete\n"
+            f"• Updated: **{updated_count}**\n"
+            f"• Skipped: **{skipped_count}**",
+            ephemeral=True
+        )
+
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ Error refreshing nicknames: {e}",
+            ephemeral=True
+        )
 
 @bot.tree.command(name="dummy4", description="Dummy 4 (Admin only)")
 async def dummy4_command(interaction: discord.Interaction):
