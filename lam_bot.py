@@ -1802,10 +1802,10 @@ async def setup_static_channels_for_guild(guild):
     volunteers_category = await get_or_create_category(guild, "Volunteers")
     if volunteers_category:
         # Create regular text channels
-        volunteer_text_channels = ["general", "useful-links", "random"]
+        volunteer_text_channels = ["general", "useful-links", "announcements", "random"]
         for channel_name in volunteer_text_channels:
             channel = await get_or_create_channel(guild, channel_name, volunteers_category)
-            if (channel_name == "useful-links"):
+            if (channel_name == "useful-links" or channel_name == "announcements"):
                 try:
                     # Get current overwrites
                     overwrites = channel.overwrites
