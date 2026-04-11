@@ -1827,7 +1827,12 @@ async def setup_static_channels_for_guild(guild):
     print("🙋 Setting up Volunteers category...")
     volunteers_category = await get_or_create_category(guild, "Volunteers")
     if volunteers_category:
-        # Create lead-es channel first so it appears at the top of the category
+        # Create regular text channels
+        volunteer_text_channels = ["general", "useful-links", "announcements", "random"]
+        for channel_name in volunteer_text_channels:
+            channel = await get_or_create_channel(guild, channel_name, volunteers_category)
+
+        # Create lead-es channel restricted to Lead ES role
         lead_es_role = await get_or_create_role(guild, "Lead ES")
         lead_es_channel = discord.utils.get(guild.text_channels, name="lead-es")
         if not lead_es_channel:
@@ -1858,11 +1863,6 @@ async def setup_static_channels_for_guild(guild):
                 print(f"❌ Error creating channel 'lead-es': {e}")
         else:
             print("✅ Channel #lead-es already exists")
-
-        # Create regular text channels
-        volunteer_text_channels = ["general", "useful-links", "announcements", "random"]
-        for channel_name in volunteer_text_channels:
-            channel = await get_or_create_channel(guild, channel_name, volunteers_category)
             if (channel_name == "useful-links" or channel_name == "announcements"):
                 try:
                     # Get current overwrites
@@ -4840,225 +4840,244 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
             print(f"❌ Could not send error message via followup: {followup_error}")
 
 
-@bot.tree.command(name="assignrunnerzones", description="Assign zone numbers per building in 'Runner Assignments' using K-means (Admin only)")
-async def assign_runner_zones_command(interaction: discord.Interaction):
-    """Read 'Runner Assignments' worksheet, cluster by building into K zones, write labels to 'Zone Number' column."""
-    # Admin only
+async def _open_runner_assignments_ws(interaction):
+    """Open the 'Runner Assignments' worksheet for the calling guild.
+
+    Returns (ws, headers, rows) on success, or (None, None, None) after
+    sending an ephemeral error message to the interaction.
+    """
+    guild_id = interaction.guild.id
+    if guild_id not in spreadsheets:
+        await interaction.followup.send(
+            "❌ No spreadsheet connected for this server! Use `/enterfolder` first.",
+            ephemeral=True
+        )
+        return None, None, None
+
+    spreadsheet = spreadsheets[guild_id]
+    worksheet_name = "Runner Assignments"
+    ws = None
+    try:
+        ws = spreadsheet.worksheet(worksheet_name)
+    except Exception:
+        try:
+            from googleapiclient.discovery import build
+            drive_service = build('drive', 'v3', credentials=creds)
+            sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
+            parent_folders = sheet_metadata.get('parents', [])
+            if not parent_folders:
+                await interaction.followup.send(
+                    "❌ Could not determine parent folder to search for 'Runner Assignments' sheet.",
+                    ephemeral=True
+                )
+                return None, None, None
+            parent_folder_id = parent_folders[0]
+            q = (f"'{parent_folder_id}' in parents and "
+                 f"mimeType='application/vnd.google-apps.spreadsheet' and "
+                 f"name contains '{worksheet_name}'")
+            results = drive_service.files().list(q=q, fields='files(id, name)').execute()
+            files = results.get('files', [])
+            if not files:
+                await interaction.followup.send(
+                    f"❌ Could not find a spreadsheet named '{worksheet_name}' in the same Drive folder.",
+                    ephemeral=True
+                )
+                return None, None, None
+            other_sheet = gc.open_by_key(files[0]['id'])
+            try:
+                ws = other_sheet.worksheet(worksheet_name)
+            except Exception:
+                ws = other_sheet.worksheets()[0]
+        except Exception as e2:
+            await interaction.followup.send(
+                f"❌ Could not locate '{worksheet_name}' in the same Drive folder: {e2}",
+                ephemeral=True
+            )
+            return None, None, None
+
+    try:
+        headers = ws.row_values(1)
+        rows = ws.get_all_records()
+        return ws, headers, rows
+    except Exception as e:
+        await interaction.followup.send(f"❌ Could not read worksheet data: {e}", ephemeral=True)
+        return None, None, None
+
+
+@bot.tree.command(name="assignbuildingzones", description="Cluster buildings into zones using K-means and write Zone Numbers to 'Runner Assignments' (Admin only)")
+async def assign_building_zones_command(interaction: discord.Interaction):
+    """Run K-means on building coordinates and write zone numbers to the Runner Assignments sheet."""
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
     if admin_lock.locked():
-        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
+        await interaction.response.send_message("❌ Server configurations are changing. Please try again when done!", ephemeral=True)
         return
-    
+
     async with admin_lock:
-
         await interaction.response.defer(ephemeral=True)
-    
-        # Verify spreadsheet connection
-        guild_id = interaction.guild.id
-        if guild_id not in spreadsheets:
-            await interaction.followup.send(
-                "❌ No spreadsheet connected for this server! Use `/enterfolder` first to connect your sheet.",
-                ephemeral=True
-            )
-            return
-    
-        spreadsheet = spreadsheets[guild_id]
-    
-        # Open the worksheet or find a separate spreadsheet in the same Drive folder
-        worksheet_name = "Runner Assignments"
-        ws = None
-        try:
-            ws = spreadsheet.worksheet(worksheet_name)
-        except Exception:
-            # If not a tab in the current spreadsheet, search the parent Drive folder for a spreadsheet named like it
-            try:
-                from googleapiclient.discovery import build
-                drive_service = build('drive', 'v3', credentials=creds)
-                # Get parent folder of the currently connected spreadsheet
-                sheet_metadata = drive_service.files().get(fileId=spreadsheet.id, fields='parents').execute()
-                parent_folders = sheet_metadata.get('parents', [])
-                if not parent_folders:
-                    await interaction.followup.send("❌ Could not determine parent folder to search for 'Runner Assignments' sheet.", ephemeral=True)
-                    return
-                parent_folder_id = parent_folders[0]
-                # Search spreadsheets in same folder
-                q = f"'{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and name contains '{worksheet_name}'"
-                results = drive_service.files().list(q=q, fields='files(id, name)').execute()
-                files = results.get('files', [])
-                if not files:
-                    await interaction.followup.send(f"❌ Could not find a spreadsheet named '{worksheet_name}' in the same folder as the template.", ephemeral=True)
-                    return
-                target = files[0]
-                other_sheet = gc.open_by_key(target['id'])
-                # Prefer a worksheet named exactly worksheet_name; otherwise first tab
-                try:
-                    ws = other_sheet.worksheet(worksheet_name)
-                except Exception:
-                    ws = other_sheet.worksheets()[0]
-            except Exception as e2:
-                await interaction.followup.send(f"❌ Could not locate '{worksheet_name}' in the same Drive folder: {str(e2)}", ephemeral=True)
-                return
-    
-        # Fetch data
-        try:
-            headers = ws.row_values(1)
-            rows = ws.get_all_records()
-        except Exception as e:
-            await interaction.followup.send(f"❌ Could not read worksheet data: {str(e)}", ephemeral=True)
+
+        ws, headers, rows = await _open_runner_assignments_ws(interaction)
+        if ws is None:
             return
 
-    # Normalize header names for lookups
-    def _find_col_index(name_candidates):
-        for i, h in enumerate(headers):
-            if not h:
-                continue
-            for cand in name_candidates:
-                if h.strip().lower() == cand:
-                    return i + 1  # 1-indexed
-        return None
-
-    building_col_index = _find_col_index(["building"])
-    coords_col_index = _find_col_index(["coordinates"])
-    lat_col_index = _find_col_index(["latitude"])
-    lon_col_index = _find_col_index(["longitude"])
-    num_zones_col_index = _find_col_index(["number of zones"])
-    zones_col_index = _find_col_index(["zone number"])
-    num_zones = 0
-
-    # Create zones column if missing
-    if zones_col_index is None:
-        try:
-            new_col_idx = len(headers) + 1
-            # Column letter (simple A..Z mapping consistent with rest of file usage)
-            col_letter = chr(ord('A') + new_col_idx - 1)
-            # Use user's preferred header name
-            ws.update(f"{col_letter}1", [["zone number"]])
-            headers.append("zone number")
-            zones_col_index = new_col_idx
-        except Exception as e:
-            await interaction.followup.send(f"❌ Could not create 'Zone Number' column: {str(e)}", ephemeral=True)
-            return
-
-    # Build data per building
-    from collections import defaultdict
-    building_points = defaultdict(list)  # building -> list of (row_idx_1_based, (lat, lon))
-
-    # Find the global K value from any row that has it
-    global_k = None
-    for row in rows:
-        lower_row = { (k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items() }
-        k_raw = lower_row.get("number of zones", lower_row.get("zones count", lower_row.get("num zones", lower_row.get("k"))))
-        if k_raw is not None and str(k_raw).strip() != "":
-            try:
-                global_k = int(float(k_raw))
-                break  # Found it, use this value for all buildings
-            except Exception:
-                continue
-
-    def _parse_float(val):
-        try:
-            if isinstance(val, str):
-                val = val.strip()
-                if not val:
-                    return None
-            return float(val)
-        except Exception:
+        def _find_col_index(name_candidates):
+            for i, h in enumerate(headers):
+                if not h:
+                    continue
+                for cand in name_candidates:
+                    if h.strip().lower() == cand:
+                        return i + 1
             return None
 
-    for idx, row in enumerate(rows, start=2):  # data starts at row 2
-        # Case-insensitive row access
-        lower_row = { (k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items() }
-        building = str(lower_row.get("building", lower_row.get("building 1", ""))).strip()
-        if not building:
-            continue
+        zones_col_index = _find_col_index(["zone number"])
 
-        lat = _parse_float(lower_row.get("latitude", lower_row.get("lat")))
-        lon = _parse_float(lower_row.get("longitude", lower_row.get("lon", lower_row.get("lng"))))
+        # Create zones column if missing
+        if zones_col_index is None:
+            try:
+                new_col_idx = len(headers) + 1
+                col_letter = chr(ord('A') + new_col_idx - 1)
+                ws.update(f"{col_letter}1", [["zone number"]])
+                headers.append("zone number")
+                zones_col_index = new_col_idx
+            except Exception as e:
+                await interaction.followup.send(f"❌ Could not create 'Zone Number' column: {e}", ephemeral=True)
+                return
 
-        if (lat is None or lon is None) and ("coordinates" in lower_row and lower_row["coordinates"]):
-            coord_str = str(lower_row["coordinates"]).strip()
-            if "," in coord_str:
-                parts = [p.strip() for p in coord_str.split(",")]
-                if len(parts) >= 2:
-                    if lat is None:
-                        lat = _parse_float(parts[0])
-                    if lon is None:
-                        lon = _parse_float(parts[1])
+        # Find the global K value
+        global_k = None
+        for row in rows:
+            lower_row = {(k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items()}
+            k_raw = lower_row.get("number of zones", lower_row.get("zones count", lower_row.get("num zones", lower_row.get("k"))))
+            if k_raw is not None and str(k_raw).strip() != "":
+                try:
+                    global_k = int(float(k_raw))
+                    break
+                except Exception:
+                    continue
 
-        if lat is None or lon is None:
-            continue
+        def _parse_float(val):
+            try:
+                if isinstance(val, str):
+                    val = val.strip()
+                    if not val:
+                        return None
+                return float(val)
+            except Exception:
+                return None
 
-        building_points[building].append((idx, (lat, lon)))
+        from collections import defaultdict
+        building_points = defaultdict(list)
+        skipped_prefilled = 0
 
-    if not building_points:
-        await interaction.followup.send("⚠️ No valid location rows found to cluster.", ephemeral=True)
+        for idx, row in enumerate(rows, start=2):
+            lower_row = {(k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items()}
+            building = str(lower_row.get("building", lower_row.get("building 1", ""))).strip()
+            if not building:
+                continue
+
+            existing_zone = str(lower_row.get("zone number", "")).strip()
+            if existing_zone:
+                skipped_prefilled += 1
+                continue
+
+            lat = _parse_float(lower_row.get("latitude", lower_row.get("lat")))
+            lon = _parse_float(lower_row.get("longitude", lower_row.get("lon", lower_row.get("lng"))))
+
+            if (lat is None or lon is None) and lower_row.get("coordinates"):
+                coord_str = str(lower_row["coordinates"]).strip()
+                if "," in coord_str:
+                    parts = [p.strip() for p in coord_str.split(",")]
+                    if len(parts) >= 2:
+                        if lat is None:
+                            lat = _parse_float(parts[0])
+                        if lon is None:
+                            lon = _parse_float(parts[1])
+
+            if lat is None or lon is None:
+                continue
+
+            building_points[building].append((idx, (lat, lon)))
+
+        if not building_points:
+            if skipped_prefilled > 0:
+                await interaction.followup.send(
+                    f"✅ All {skipped_prefilled} rows already have zone numbers — nothing to cluster.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send("⚠️ No valid location rows found to cluster.", ephemeral=True)
+            return
+
+        k_to_use = global_k if global_k is not None and global_k > 0 else 1
+        all_points = []
+        all_items = []
+
+        for bldg, items in building_points.items():
+            for row_idx, point in items:
+                all_points.append(point)
+                all_items.append((bldg, row_idx, point))
+
+        labels = _run_kmeans_clustering(all_points, k_to_use)
+
+        building_zone_counts = {}
+        for i, (bldg, row_idx, point) in enumerate(all_items):
+            zone = labels[i] + 1
+            building_zone_counts.setdefault(bldg, {})
+            building_zone_counts[bldg][zone] = building_zone_counts[bldg].get(zone, 0) + 1
+
+        debug_info = []
+        for bldg, zone_counts in building_zone_counts.items():
+            zones = sorted(zone_counts.keys())
+            counts = [zone_counts[z] for z in zones]
+            debug_info.append(f"{bldg}: zones {zones} (counts {counts})")
+
+        updates = [(all_items[i][1], str(labels[i] + 1)) for i in range(len(all_items))]
+
+        zones_col_letter = chr(ord('A') + zones_col_index - 1)
+        updated = 0
+        for row_idx, value in updates:
+            try:
+                ws.update(f"{zones_col_letter}{row_idx}", [[value]])
+                updated += 1
+            except Exception:
+                pass
+
+        debug_text = "\n".join(debug_info[:5])
+        if len(debug_info) > 5:
+            debug_text += f"\n... and {len(debug_info) - 5} more buildings"
+
+        skipped_text = f" ({skipped_prefilled} rows already had zones and were skipped)" if skipped_prefilled > 0 else ""
+        await interaction.followup.send(
+            f"✅ Assigned {k_to_use} zones for {updated} rows across {len(building_points)} buildings{skipped_text}.\n\n"
+            f"Run `/assignrunnerzones` to send the runner assignments to building channels.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="assignrunnerzones", description="Send designated runner assignments to each building chat (Admin only)")
+async def assign_runner_zones_command(interaction: discord.Interaction):
+    """Read zone assignments from 'Runner Assignments' and post runner lists to each building chat channel."""
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
 
-    # Compute clusters and prepare updates
-    updates = []  # list of (row_index, zone_label_str)
-    k_to_use = global_k if global_k is not None and global_k > 0 else 1
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try again when done!", ephemeral=True)
+        return
 
-    # Collect ALL points from ALL buildings for global clustering
-    all_points = []
-    all_items = []  # (building, row_idx, point)
+    async with admin_lock:
+        await interaction.response.defer(ephemeral=True)
 
-    for bldg, items in building_points.items():
-        for row_idx, point in items:
-            all_points.append(point)
-            all_items.append((bldg, row_idx, point))
+        guild_id = interaction.guild.id
+        ws, headers, rows = await _open_runner_assignments_ws(interaction)
+        if ws is None:
+            return
 
-    # Run K-means on ALL points together
-    labels = _run_kmeans_clustering(all_points, k_to_use)
+        from collections import defaultdict
 
-    # Debug: count cluster distribution by building
-    building_zone_counts = {}  # building -> {zone: count}
-    for i, (bldg, row_idx, point) in enumerate(all_items):
-        zone = labels[i] + 1  # Convert to 1-based
-        if bldg not in building_zone_counts:
-            building_zone_counts[bldg] = {}
-        building_zone_counts[bldg][zone] = building_zone_counts[bldg].get(zone, 0) + 1
-
-    debug_info = []
-    for bldg, zone_counts in building_zone_counts.items():
-        zones = sorted(zone_counts.keys())
-        counts = [zone_counts[z] for z in zones]
-        debug_info.append(f"{bldg}: zones {zones} (counts {counts})")
-
-    # Create updates
-    for i, (bldg, row_idx, point) in enumerate(all_items):
-        zone_label = str(labels[i] + 1)  # Convert to 1-based
-        updates.append((row_idx, zone_label))
-
-    # Apply updates (per cell to minimize risk of range mistakes)
-    zones_col_letter = chr(ord('A') + zones_col_index - 1)
-    updated = 0
-    for row_idx, value in updates:
-        try:
-            ws.update(f"{zones_col_letter}{row_idx}", [[value]])
-            updated += 1
-        except Exception:
-            pass
-
-    # Summarize K used per building (limit for brevity)
-    # Send debug info first
-    debug_text = "\n".join(debug_info[:5])  # Limit to first 5 buildings
-    if len(debug_info) > 5:
-        debug_text += f"\n... and {len(debug_info) - 5} more buildings"
-
-    await interaction.followup.send(
-        f"✅ Assigned {k_to_use} zones for {len(updates)} rows across {len(building_points)} buildings in '{worksheet_name}'.\n\n"
-        f"Now sending runner assignments to building channels...",
-        ephemeral=True
-    )
-
-    # Send messages to each building channel with their designated runners
-    try:
-        guild = interaction.guild
-        
-        # Get the main sheet to cross-reference Discord IDs
+        # Get the main sheet for email → Discord ID lookup
         main_sheet = sheets.get(guild_id)
         main_data = []
         if main_sheet:
@@ -5066,128 +5085,104 @@ async def assign_runner_zones_command(interaction: discord.Interaction):
                 main_data = main_sheet.get_all_records()
             except Exception as e:
                 print(f"⚠️ Could not access main sheet for Discord IDs: {e}")
-        
-        # Create email -> discord_id mapping from main sheet
+
         email_to_discord = {}
         for row in main_data:
             email = str(row.get("Email", "")).strip().lower()
-            discord_id = str(row.get("Discord ID", "")).strip()
-            if email and discord_id:
+            discord_id_raw = str(row.get("Discord ID", "")).strip()
+            if email and discord_id_raw:
                 try:
-                    email_to_discord[email] = int(discord_id)
+                    email_to_discord[email] = int(discord_id_raw)
                 except ValueError:
                     pass
-        
-        # First pass: find all buildings and their zones
-        building_zones = {}  # building -> zone_number
-        zone_buildings = defaultdict(list)  # zone -> [building names]
-        
-        for idx, row in enumerate(rows, start=2):
+
+        # First pass: buildings → zone numbers
+        building_zones = {}
+        zone_buildings = defaultdict(list)
+
+        for row in rows:
             lower_row = {(k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items()}
             building = str(lower_row.get("building", lower_row.get("building 1", ""))).strip()
             zone_raw = str(lower_row.get("zone number", lower_row.get("zone", ""))).strip()
-            
-            # If this row has a building and zone, it's a building definition
             if building and zone_raw:
                 try:
                     zone_num = int(zone_raw)
                     building_zones[building] = zone_num
                     zone_buildings[zone_num].append(building)
-                    print(f"📍 Found building: {building} → Zone {zone_num}")
+                    print(f"📍 {building} → Zone {zone_num}")
                 except ValueError:
                     pass
-        
-        # Second pass: find all runners and their zones from Runner Zone column
-        zone_runners = defaultdict(list)  # zone -> [(name, discord_id)]
-        
-        # Debug: print available columns
+
+        if not building_zones:
+            await interaction.followup.send(
+                "⚠️ No zone numbers found in 'Runner Assignments'. Run `/assignbuildingzones` first.",
+                ephemeral=True
+            )
+            return
+
+        # Debug available columns
         if rows:
-            first_row = rows[0]
-            lower_first = {(k.strip().lower() if isinstance(k, str) else k): v for k, v in first_row.items()}
+            lower_first = {(k.strip().lower() if isinstance(k, str) else k): v for k, v in rows[0].items()}
             print(f"🔍 DEBUG: Available columns: {list(lower_first.keys())}")
-        
+
+        # Second pass: runners → zone numbers
+        zone_runners = defaultdict(list)
+
         for idx, row in enumerate(rows, start=2):
             lower_row = {(k.strip().lower() if isinstance(k, str) else k): v for k, v in row.items()}
             name = str(lower_row.get("name", "")).strip()
             email = str(lower_row.get("email", "")).strip().lower()
-            
-            # Use "Runner Zone" column specifically (NOT "Zone Number")
             runner_zone_raw = str(lower_row.get("runner zone", "")).strip()
-            
-            # Debug first few rows
+
             if name and idx <= 10:
                 print(f"🔍 Row {idx}: name={name}, email={email}, runner_zone={runner_zone_raw}")
-            
-            # If this row has a name and runner zone, it's a runner
+
             if name and runner_zone_raw:
                 try:
                     zone_num = int(runner_zone_raw)
                     discord_id = email_to_discord.get(email)
                     zone_runners[zone_num].append((name, discord_id))
-                    print(f"🏃 Found runner: {name} (email: {email}) → Zone {zone_num}")
+                    print(f"🏃 {name} (email: {email}) → Zone {zone_num}")
                 except ValueError:
                     print(f"⚠️ Could not parse runner zone '{runner_zone_raw}' for {name}")
-        
-        # Match runners to buildings by zone
-        building_runners = defaultdict(list)  # building -> [(name, discord_id)]
-        
-        for building, zone_num in building_zones.items():
-            # Get all runners for this zone
-            runners_in_zone = zone_runners.get(zone_num, [])
-            building_runners[building] = runners_in_zone
-            print(f"✅ Matched {len(runners_in_zone)} runners to building {building} (zone {zone_num})")
-        
-        # Send message to each building channel
+
+        # Match runners to buildings and send messages
+        guild = interaction.guild
         messages_sent = 0
-        for building, runners in building_runners.items():
-            # Find the building chat channel
-            building_chat_name = f"{building.lower().replace(' ', '-')}-chat"
-            building_channel = discord.utils.get(guild.text_channels, name=building_chat_name)
-            
-            if not building_channel:
-                print(f"⚠️ Could not find building channel: {building_chat_name}")
-                continue
-            
+
+        for building, zone_num in building_zones.items():
+            runners = zone_runners.get(zone_num, [])
             if not runners:
                 continue
-            
-            # Build the message with mentions
+
+            building_chat_name = f"{building.lower().replace(' ', '-')}-chat"
+            building_channel = discord.utils.get(guild.text_channels, name=building_chat_name)
+            if not building_channel:
+                print(f"⚠️ Could not find channel: {building_chat_name}")
+                continue
+
+            runner_mentions = [f"• <@{did}>" if did else f"• {name}" for name, did in runners]
             embed = discord.Embed(
                 title=f"🏃 Designated Runners for {building}",
                 description="Here are the runners assigned to help with this building:",
                 color=discord.Color.orange()
             )
-            
-            # Create list of runner mentions/names
-            runner_mentions = []
-            for name, discord_id in runners:
-                if discord_id:
-                    runner_mentions.append(f"• <@{discord_id}>")
-                else:
-                    runner_mentions.append(f"• {name}")
-            
-            runners_text = "\n".join(runner_mentions)
-            embed.add_field(
-                name=f"Runners:",
-                value=runners_text,
-                inline=False
-            )
-            
+            embed.add_field(name="Runners:", value="\n".join(runner_mentions), inline=False)
             embed.set_footer(text="If you need help, create a ticket in the #help forum!\nDM these runners if you need urgent help!")
-            
+
             try:
                 await building_channel.send(embed=embed)
                 messages_sent += 1
                 print(f"✅ Sent runner assignments to {building_chat_name}")
             except Exception as e:
-                print(f"⚠️ Error sending message to {building_chat_name}: {e}")
-        
-        print(f"✅ Sent runner assignments to {messages_sent} building channels")
-        
-    except Exception as e:
-        print(f"⚠️ Error sending runner assignments to channels: {e}")
+                print(f"⚠️ Error sending to {building_chat_name}: {e}")
 
-    
+        await interaction.followup.send(
+            f"✅ Sent runner assignments to {messages_sent} building channel(s).",
+            ephemeral=True
+        )
+
+
 
 
 @tasks.loop(minutes=60)
