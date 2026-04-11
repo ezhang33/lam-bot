@@ -4904,7 +4904,7 @@ async def _open_runner_assignments_ws(interaction):
         return None, None, None
 
 
-@bot.tree.command(name="assignbuildingzones", description="Cluster buildings into zones using K-means and write Zone Numbers to 'Runner Assignments' (Admin only)")
+@bot.tree.command(name="assignbuildingzones", description="Cluster buildings into zones using K-means and write Zone Numbers (Admin only)")
 async def assign_building_zones_command(interaction: discord.Interaction):
     """Run K-means on building coordinates and write zone numbers to the Runner Assignments sheet."""
     if not interaction.user.guild_permissions.administrator:
