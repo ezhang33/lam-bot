@@ -1349,6 +1349,109 @@ async def add_runner_access(channel, runner_role):
     except Exception as e:
         print(f"❌ Error updating channel permissions for #{channel.name}: {e}")
 
+async def get_runner_member_to_zone_map(guild):
+    """Returns a dict of {member_object: zone_int_or_None} for all current Runners."""
+    guild_id = guild.id
+    runner_role = discord.utils.get(guild.roles, name="Runner")
+    if not runner_role: return {}
+    spreadsheet = spreadsheets.get(guild_id)
+    if not spreadsheet: return {}
+    try:
+        # Try to find the Runner Assignments sheet
+        try:
+            r_ws = spreadsheet.worksheet("Runner Assignments")
+        except:
+            from googleapiclient.discovery import build
+            drive_service = build('drive', 'v3', credentials=creds)
+            q = f"'{spreadsheet.id}' in parents and name contains 'Runner Assignments'"
+            res = drive_service.files().list(q=q).execute()
+            if not res.get('files'): return {}
+            r_ss = gc.open_by_key(res['files'][0]['id'])
+            r_ws = r_ss.get_worksheet(0)
+
+        r_data = r_ws.get_all_records()
+        email_to_zone = {}
+        for row in r_data:
+            email = str(row.get("Email", "")).strip().lower()
+            zone = row.get("Runner Zone", row.get("Zone Number", ""))
+            if email and zone:
+                try: email_to_zone[email] = int(zone)
+                except: continue
+
+        # Get main sheet to link Email to Discord ID
+        main_data = sheets[guild_id].get_all_records()
+        id_to_zone = {}
+        for row in main_data:
+            email = str(row.get("Email", "")).strip().lower()
+            d_id = str(row.get("Discord ID", "")).strip()
+            if email in email_to_zone and d_id.isdigit():
+                id_to_zone[int(d_id)] = email_to_zone[email]
+
+        # Final Map: Member -> Zone
+        return {m: id_to_zone.get(m.id) for m in runner_role.members}
+    except Exception as e:
+        print(f"Error building runner zone map: {e}")
+        return {}
+
+async def apply_runner_access_logic(guild):
+    """Core logic to set channel permissions based on runner_access mode."""
+    guild_id = guild.id
+    mode = runner_all_access.get(guild_id, 0)
+    runner_role = discord.utils.get(guild.roles, name="Runner")
+    if not runner_role: return
+
+    runner_map = await get_runner_member_to_zone_map(guild) if mode == 2 else {}
+    static_categories = ["Welcome", "Tournament Officials", "Volunteers", "Chapters"]
+
+    for category in guild.categories:
+        if category.name in static_categories: continue
+
+        # Get building zone for this category
+        b_zone = await get_building_zone(guild_id, category.name)
+
+        # Mode 2 Logic: Who is allowed in this specific building category?
+        allowed_members = set()
+        if mode == 2:
+            for runner, r_zone in runner_map.items():
+                # FALLBACK: If runner has no zone assigned, give access to all
+                if r_zone is None or (b_zone is not None and r_zone == b_zone):
+                    allowed_members.add(runner)
+
+        for channel in category.channels:
+            if not isinstance(channel, (discord.TextChannel, discord.VoiceChannel)): continue
+            overwrites = channel.overwrites
+            changed = False
+
+            # --- 1. Handle Role-Level Overwrites (Modes 0 and 1) ---
+            if mode == 1:
+                new_ov = discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True)
+                if overwrites.get(runner_role) != new_ov:
+                    overwrites[runner_role] = new_ov
+                    changed = True
+            else:
+                if runner_role in overwrites:
+                    del overwrites[runner_role]
+                    changed = True
+
+            # --- 2. Handle Member-Level Overwrites (Edge Case 4: Self-Cleaning) ---
+            for target in list(overwrites.keys()):
+                if isinstance(target, discord.Member):
+                    # If we aren't in Mode 2, or this member isn't explicitly on the 'allowed' list for this room, remove them
+                    if mode != 2 or target not in allowed_members:
+                        del overwrites[target]
+                        changed = True
+
+            # Mode 2: Add specific member overwrites
+            if mode == 2:
+                for member in allowed_members:
+                    new_ov = discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True)
+                    if overwrites.get(member) != new_ov:
+                        overwrites[member] = new_ov
+                        changed = True
+
+            if changed:
+                await handle_rate_limit(channel.edit(overwrites=overwrites), f"sync runner access for {channel.name}")
+
 async def ensure_runner_tournament_officials_access(guild, runner_role):
     """Ensure Runner role has access to Tournament Officials channels"""
     if not runner_role:
@@ -3467,10 +3570,11 @@ async def perform_member_sync(guild, data):
                 if roles:
                     roles_to_assign.extend(roles)
 
-                secondary_roles_raw = str(row.get("Secondary Role", "")).strip()
-                secondary_roles = [r.strip() for r in secondary_roles_raw.split(";") if r.strip()]
-                if secondary_roles:
-                    roles_to_assign.extend(secondary_roles)
+                sec_raw = str(row.get("Secondary Role", "")).strip()
+                sec_roles = [r.strip() for r in sec_raw.split(";") if r.strip()]
+                if sec_roles:
+                    roles_to_assign.extend(sec_roles)
+
 
                 chapter = str(row.get("Chapter", "")).strip()
                 if chapter and chapter.lower() not in ["n/a", "na", ""]:
@@ -3595,6 +3699,10 @@ async def perform_member_sync(guild, data):
 
     # Organize role hierarchy after sync
     await organize_role_hierarchy_for_guild(guild)
+
+    # Automatically apply runner access logic during every sync
+    print(f"🔑 Applying Runner Access logic (Mode {runner_all_access.get(guild.id, 0)}) for {guild.name}...")
+    await apply_runner_access_logic(guild)
 
     print(f"✅ Sync complete: {processed_count} users processed, {role_assignments} roles assigned, {role_removals} roles removed")
 
@@ -6059,86 +6167,32 @@ async def send_singular_material_command(interaction: discord.Interaction, mater
             import traceback
             traceback.print_exc()
 
-@bot.tree.command(name="set_runner_all_access", description="Set if runners get access to all building/event channels (Admin only)")
-@app_commands.describe(
-    runner_access="1 to give Runners access to all rooms, 0 to restrict them to static channels",
-)
-async def set_runner_all_access_command(interaction: discord.Interaction, runner_access: int):
-    """Set Runner All Access Command"""
-    global runner_all_access
-
+@bot.tree.command(name="set_runner_access", description="Set runner access level (Admin only)")
+@app_commands.describe(mode="0: Restricted, 1: All Access, 2: Zone-Based")
+@app_commands.choices(mode=[
+    app_commands.Choice(name="0: Restricted (Static Only)", value=0),
+    app_commands.Choice(name="1: Full Access (All Rooms)", value=1),
+    app_commands.Choice(name="2: Zone-Based (Specific Rooms)", value=2)
+])
+async def set_runner_access_command(interaction: discord.Interaction, mode: int):
+    """Updated command to set access mode and trigger the logic engine."""
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        await interaction.response.send_message("❌ You need administrator permissions!", ephemeral=True)
         return
 
     await interaction.response.defer(ephemeral=True)
 
-    guild = interaction.guild
-    guild_id = guild.id
-
-    runner_access_bool = bool(runner_access)
-    # Default to 0 if the server hasn't set it yet
-    current_access_bool = bool(runner_all_access.get(guild_id, 0))
-
-    if runner_access_bool == current_access_bool:
-        state = "already HAS" if runner_access_bool else "is already RESTRICTED from"
-        await interaction.followup.send(f"⚠️ The Runner role {state} all-access.", ephemeral=True)
-        return
-
-    # Save the setting per-guild in memory
-    runner_all_access[guild_id] = 1 if runner_access_bool else 0
-
-    # Save to the permanent cache file so it survives bot restarts
+    # Save setting
+    runner_all_access[interaction.guild.id] = mode
     cache = load_cache()
     cache["runner_access_settings"] = runner_all_access
     save_cache(cache)
 
-    runner_role = discord.utils.get(guild.roles, name="Runner")
-    if not runner_role:
-        await interaction.followup.send("❌ Runner role not found! Please create it or run /enterfolder first.", ephemeral=True)
-        return
+    # Trigger Logic Engine
+    await apply_runner_access_logic(interaction.guild)
 
-    try:
-        # Added "Chapters" to protect them from being accidentally modified
-        static_categories = ["Welcome", "Tournament Officials", "Volunteers", "Chapters"]
-        modified_count = 0
-
-        for category in guild.categories:
-            # Skip the static categories; only target building/room categories
-            if category.name not in static_categories:
-                for room in category.channels:
-                    # Make sure we are only modifying text or voice channels
-                    if isinstance(room, discord.TextChannel) or isinstance(room, discord.VoiceChannel):
-                        overwrites = room.overwrites
-
-                        if runner_access_bool:
-                            # Grant access to this specific room
-                            overwrites[runner_role] = discord.PermissionOverwrite(
-                                read_messages=True,
-                                send_messages=True,
-                                read_message_history=True
-                            )
-                        else:
-                            # Remove Runner overwrite entirely so it defaults to hidden
-                            if runner_role in overwrites:
-                                del overwrites[runner_role]
-
-                        # Apply the changes via API
-                        await handle_rate_limit(
-                            room.edit(overwrites=overwrites, reason=f"Updated Runner all-access to {runner_access_bool}"),
-                            f"editing channel '{room.name}' permissions"
-                        )
-                        modified_count += 1
-
-        action_text = "GRANTED access to" if runner_access_bool else "REMOVED access from"
-        await interaction.followup.send(f"✅ Successfully **{action_text}** {modified_count} building/event channels for the Runner role.", ephemeral=True)
-
-    except discord.Forbidden:
-        await interaction.followup.send("❌ Bot lacks permissions to modify channel overwrites.", ephemeral=True)
-        print("❌ Error: Bot forbidden from editing channel overwrites.")
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error updating runner access: {str(e)}", ephemeral=True)
-        print(f"❌ Error in set_runner_all_access: {e}")
+    mode_text = {0: "Restricted", 1: "All Access", 2: "Zone-Based"}[mode]
+    await interaction.followup.send(f"✅ Runner Access set to **{mode_text}** and permissions updated.", ephemeral=True)
 
 @bot.tree.command(name="refreshnicknames", description="Reapply nicknames for all users with a Discord ID (Admin only)")
 async def refresh_nicknames_command(interaction: discord.Interaction):
