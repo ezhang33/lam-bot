@@ -84,7 +84,7 @@ async def safe_call(coro):
         result = await coro
         await asyncio.sleep(0.5)
         return result
-    
+
 def save_cache(data):
     """Save cache data to JSON file"""
     try:
@@ -443,10 +443,10 @@ async def get_or_create_channel(guild, channel_name, category, event_role=None, 
         # Give Runner role access only to static channels (not building/event channels)
         runner_role = discord.utils.get(guild.roles, name="Runner")
         static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
-        
+
         # Look up this specific server's setting (default to 0 / restricted)
         guild_runner_access = runner_all_access.get(guild.id, 0)
-        
+
         if runner_role and category and (guild_runner_access or category.name in static_categories):
             overwrites[runner_role] = discord.PermissionOverwrite(
                 read_messages=True,
@@ -1056,7 +1056,7 @@ async def search_and_share_useful_links(guild):
         # Delete old pinned useful links messages from the bot
         pinned_messages = await safe_call(target_channel.pins())
         deleted_count = 0
-        
+
         for message in pinned_messages:
             # Check if this is a useful links message sent by the bot
             if message.author == bot.user and message.embeds:
@@ -1069,7 +1069,7 @@ async def search_and_share_useful_links(guild):
                         await asyncio.sleep(0.2)
                     except Exception as delete_error:
                         print(f"⚠️ Could not delete useful links message in #{target_channel.name}: {delete_error}")
-        
+
         if deleted_count > 0:
             print(f"✅ Cleaned up {deleted_count} old useful links message(s)")
 
@@ -1222,7 +1222,7 @@ async def search_and_share_runner_info(guild):
         # Delete old pinned runner info messages from the bot
         pinned_messages = await safe_call(target_channel.pins())
         deleted_count = 0
-        
+
         for message in pinned_messages:
             # Check if this is a runner info message sent by the bot
             if message.author == bot.user and message.embeds:
@@ -1235,7 +1235,7 @@ async def search_and_share_runner_info(guild):
                         await asyncio.sleep(0.2)
                     except Exception as delete_error:
                         print(f"⚠️ Could not delete runner info message in #{target_channel.name}: {delete_error}")
-        
+
         if deleted_count > 0:
             print(f"✅ Cleaned up {deleted_count} old runner info message(s)")
 
@@ -1389,7 +1389,7 @@ async def send_building_welcome_message(guild, building_chat, building):
         if not building_events:
             print(f"⚠️ No events found for building '{building}', skipping welcome message")
             return
-        
+
         # Sort the events alphabetically
         building_events.sort(key=lambda x: x[0].lower())
 
@@ -2428,42 +2428,42 @@ async def generate_building_structures(guild, force_refresh_welcome=False):
     print("🏗️ Generating building structures from Room Assignments...")
     guild_id = guild.id
     room_data = await get_room_assignments(guild_id)
-    
+
     if not room_data:
         print("⚠️ No data found in Room Assignments sheet.")
         return 0, 0
-        
+
     building_structures = set()
     buildings = set()
-    
+
     for row in room_data:
         # Make column lookups case-insensitive and highly flexible
         lower_row = {str(k).strip().lower(): v for k, v in row.items()}
-        
+
         building = str(lower_row.get("building", lower_row.get("building 1", ""))).strip()
         event = str(lower_row.get("events", lower_row.get("event", lower_row.get("first event", "")))).strip()
         room = str(lower_row.get("room", lower_row.get("room 1", ""))).strip()
-        
+
         # Skip priority/custom roles
         priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
-        
+
         if building and event and event not in priority_roles:
             building_structures.add((building, event, room))
             buildings.add(building)
-            
+
     print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create across {len(buildings)} buildings.")
-    
+
     # Create all building structures
     for building, event, room in building_structures:
         print(f"🏗️ Creating structure: {building} - {event} - {room}")
         await setup_building_structure(guild, building, event, room)
-        
+
     # If forced refresh, delete old welcome messages and send new ones
     if force_refresh_welcome:
         for building in buildings:
             building_chat_name = f"{sanitize_for_discord(building)}-chat"
             building_chat = discord.utils.get(guild.text_channels, name=building_chat_name)
-            
+
             if building_chat:
                 # Delete old pinned welcome messages sent by the bot
                 try:
@@ -2476,7 +2476,7 @@ async def generate_building_structures(guild, force_refresh_welcome=False):
                                 await asyncio.sleep(0.5)
                 except Exception as e:
                     print(f"⚠️ Could not clear old welcome messages in #{building_chat.name}: {e}")
-                    
+
                 # Send a fresh welcome message
                 print(f"📝 Sending refreshed welcome message to #{building_chat.name}")
                 await send_building_welcome_message(guild, building_chat, building)
@@ -2484,11 +2484,11 @@ async def generate_building_structures(guild, force_refresh_welcome=False):
     # Sort categories once after all structures are created
     print("📋 Organizing all building categories alphabetically...")
     await sort_building_categories_alphabetically(guild)
-    
+
     # NEW: Sort the channels inside those building categories
     print("📋 Organizing channels within building categories alphabetically...")
     await sort_channels_in_building_categories(guild)
-    
+
     return len(building_structures), len(buildings)
 
 @bot.event
@@ -2674,7 +2674,7 @@ async def get_room_assignments(guild_id):
     except Exception as e:
         print(f"⚠️ 'Room Assignments' worksheet not found or error: {e}")
         return []
-    
+
 # async def get_user_event_building(guild_id, discord_id):
 #     """Look up a user's event and building from the main sheet"""
 #     if guild_id not in spreadsheets:
@@ -2795,7 +2795,7 @@ async def get_user_event_building(guild_id, discord_id):
         # Look up their building and room in Room Assignments
         building = None
         room = None
-        
+
         if user_event:
             room_data = await get_room_assignments(guild_id)
             for r_row in room_data:
@@ -2826,7 +2826,7 @@ async def get_building_events(guild_id, building):
     try:
         room_data = await get_room_assignments(guild_id)
         building_events = []
-        
+
         # Find all events in this building
         for row in room_data:
             row_building = str(row.get("Building", "")).strip()
@@ -2848,7 +2848,7 @@ async def get_building_events(guild_id, building):
     except Exception as e:
         print(f"❌ Error looking up building events: {e}")
         return []
-    
+
 async def get_building_zone(guild_id, building):
     """Get the zone number for a building from the Runner Assignments sheet"""
     if guild_id not in spreadsheets:
@@ -2919,38 +2919,38 @@ async def sort_channels_in_building_categories(guild):
     """Sort channels inside building categories alphabetically, keeping building-chat at the top"""
     try:
         static_categories = ["Welcome", "Tournament Officials", "Chapters", "Volunteers"]
-        
+
         for category in guild.categories:
             # Skip static categories
             if category.name in static_categories:
                 continue
-                
+
             print(f"📋 Sorting channels in building category: '{category.name}'")
-            
+
             # Get all text channels in this category
             channels = category.text_channels
             if len(channels) <= 1:
                 continue
-                
+
             # The expected name for the building chat
             building_chat_name = f"{sanitize_for_discord(category.name)}-chat"
-            
+
             building_chats = []
             event_channels = []
-            
+
             # Separate building chat from event channels
             for channel in channels:
                 if channel.name == building_chat_name or channel.name.endswith("-chat"):
                     building_chats.append(channel)
                 else:
                     event_channels.append(channel)
-                    
+
             # Sort event channels alphabetically
             event_channels.sort(key=lambda c: c.name.lower())
-            
+
             # Combine them: Building chat first, then event channels
             sorted_channels = building_chats + event_channels
-            
+
             # Update positions within the category
             for i, channel in enumerate(sorted_channels):
                 if channel.position != i:
@@ -3067,37 +3067,37 @@ async def check_for_burger_request(thread):
     try:
         # Check the thread title
         thread_title_lower = thread.name.lower()
-        
+
         # Check if the phrases exist in the title
-        has_burger_phrase = ("55 burgers" in thread_title_lower or 
+        has_burger_phrase = ("55 burgers" in thread_title_lower or
                             "fifty five burgers" in thread_title_lower or
                             "55 burger" in thread_title_lower or
                             "fifty five burger" in thread_title_lower)
-        
+
         # If not in title, check the initial message
         if not has_burger_phrase:
             try:
                 # Get the first message in the thread (the initial post)
                 async for message in thread.history(limit=1, oldest_first=True):
                     message_content_lower = message.content.lower()
-                    has_burger_phrase = ("55 burgers" in message_content_lower or 
+                    has_burger_phrase = ("55 burgers" in message_content_lower or
                                         "fifty five burgers" in message_content_lower or
                                         "55 burger" in message_content_lower or
                                         "fifty five burger" in message_content_lower)
                     break
             except Exception as e:
                 print(f"⚠️ Could not check initial message for burger phrase: {e}")
-        
+
         # If burger phrase found, DM the ticket creator
         if has_burger_phrase:
             print(f"🍔 Burger request detected in ticket '{thread.name}'!")
-            
+
             # Get the ticket creator
             ticket_creator = thread.owner
             if not ticket_creator:
                 print(f"⚠️ Could not determine ticket creator to send burger DM")
                 return
-            
+
             try:
                 # Track this burger delivery
                 active_burger_deliveries[ticket_creator.id] = {
@@ -3105,7 +3105,7 @@ async def check_for_burger_request(thread):
                     "user": ticket_creator
                 }
                 print(f"🎯 Started tracking burger delivery for {ticket_creator}")
-                
+
                 # Send 55 burgers one by one with random delays
                 for burger_num in range(1, 56):
                     # Check if stop was requested
@@ -3114,20 +3114,20 @@ async def check_for_burger_request(thread):
                         await ticket_creator.send("Grill exploded. No more burgers for you :(")
                         del active_burger_deliveries[ticket_creator.id]
                         break
-                    
+
                     # Send burger emoji DM
                     await ticket_creator.send("🍔")
-                    
+
                     # Send counter message
                     await ticket_creator.send(f"Burger {burger_num} of 55")
                     print(f"✅ Sent burger {burger_num} of 55 to {ticket_creator}")
-                    
+
                     # Wait random time between 5 seconds to 1 hour before next burger (except after the last one)
                     if burger_num < 55:
                         delay = random.uniform(5, 3600)
                         print(f"⏱️ Waiting {delay:.1f} seconds before next burger...")
                         await asyncio.sleep(delay)
-                
+
                 # Clean up tracking if completed successfully
                 if ticket_creator.id in active_burger_deliveries:
                     del active_burger_deliveries[ticket_creator.id]
@@ -3135,7 +3135,7 @@ async def check_for_burger_request(thread):
 
                 await ticket_creator.send("Would you like any fries with that? 🍟")
                 print(f"🎉 Completed sending all 55 burgers to {ticket_creator}")
-                
+
             except discord.Forbidden:
                 print(f"⚠️ Cannot DM {ticket_creator} - they may have DMs disabled")
                 if ticket_creator.id in active_burger_deliveries:
@@ -3144,7 +3144,7 @@ async def check_for_burger_request(thread):
                 print(f"❌ Error sending burger DM to {ticket_creator}: {dm_error}")
                 if ticket_creator.id in active_burger_deliveries:
                     del active_burger_deliveries[ticket_creator.id]
-            
+
     except Exception as e:
         print(f"❌ Error checking for burger request: {e}")
         import traceback
@@ -3240,7 +3240,7 @@ async def on_thread_create(thread):
                     description=f"**Ticket:** {thread.mention}\n**Creator:** {ticket_creator.mention}\n**Event:** {event}\n**Location:** {location}",
                     color=discord.Color.yellow()
                 )
-                
+
                 if is_fallback_to_all:
                     embed.add_field(
                         name="🚨 ALL Runners",
@@ -3467,9 +3467,10 @@ async def perform_member_sync(guild, data):
                 if roles:
                     roles_to_assign.extend(roles)
 
-                secondary_role = str(row.get("Secondary Role", "")).strip()
-                if secondary_role:
-                    roles_to_assign.append(secondary_role)
+                secondary_roles_raw = str(row.get("Secondary Role", "")).strip()
+                secondary_roles = [r.strip() for r in secondary_roles_raw.split(";") if r.strip()]
+                if secondary_roles:
+                    roles_to_assign.extend(secondary_roles)
 
                 chapter = str(row.get("Chapter", "")).strip()
                 if chapter and chapter.lower() not in ["n/a", "na", ""]:
@@ -3609,7 +3610,7 @@ async def perform_member_sync(guild, data):
 @bot.tree.command(name="gettemplate", description="Get a link to the template Google Drive folder")
 async def get_template_command(interaction: discord.Interaction):
     """Provide a link to the template Google Drive folder"""
-            
+
     await interaction.response.defer(ephemeral=True)
     template_url = "https://drive.google.com/drive/folders/1drRK7pSdCpbqzJfaDhFtKlYUrf_uYsN8?usp=sharing"
     embed = discord.Embed(
@@ -3645,7 +3646,7 @@ async def enter_folder_command(interaction: discord.Interaction, folder_link: st
 
     # Extract folder ID from the Google Drive link
     folder_id = None
-    
+
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
@@ -3653,7 +3654,7 @@ async def enter_folder_command(interaction: discord.Interaction, folder_link: st
     if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
-    
+
     async with admin_lock:
         if "drive.google.com/drive/folders/" in folder_link:
             try:
@@ -3854,7 +3855,7 @@ async def enter_folder_command(interaction: discord.Interaction, folder_link: st
                         chapters = set()
                         for row in test_data:
                             chapter = str(row.get("Chapter", "")).strip()
-                            
+
                             # Add chapters (including Unaffiliated for blank/N/A)
                             if chapter and chapter.lower() not in ["n/a", "na", ""]:
                                 chapters.add(chapter)
@@ -3876,7 +3877,7 @@ async def enter_folder_command(interaction: discord.Interaction, folder_link: st
                         await sort_chapter_channels_alphabetically(guild)
 
                         print("✅ Finished pre-creating structures")
-                
+
                 except Exception as structure_error:
                     print(f"⚠️ Error creating building structures: {structure_error}")
                     # Don't fail the whole command if structure creation fails
@@ -3969,23 +3970,23 @@ async def sync_command(interaction: discord.Interaction):
     if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
-    
+
     async with admin_lock:
 
         await interaction.response.defer(ephemeral=True)
-    
+
         try:
             # Run the sync function
             print("🔄 Manual sync triggered by", interaction.user)
-    
+
             # Use the guild where the command was called
             guild = interaction.guild
             if guild is None:
                 await interaction.followup.send("❌ This command must be used in a server!", ephemeral=True)
                 return
-    
+
             guild_id = guild.id
-    
+
             # Check if we have a sheet connected for this guild
             if guild_id not in sheets:
                 await interaction.followup.send(
@@ -3994,7 +3995,7 @@ async def sync_command(interaction: discord.Interaction):
                     ephemeral=True
                 )
                 return
-    
+
             # Get current sheet data
             try:
                 data = sheets[guild_id].get_all_records()
@@ -4002,10 +4003,10 @@ async def sync_command(interaction: discord.Interaction):
             except Exception as e:
                 await interaction.followup.send(f"❌ Could not fetch sheet data: {str(e)}", ephemeral=True)
                 return
-    
+
             # Run the sync using the shared function
             sync_results = await perform_member_sync(guild, data)
-    
+
             embed = discord.Embed(
                 title="✅ Manual Sync Complete!",
                 description=f"📊 **Processed:** {sync_results['processed']} valid Discord IDs\n"
@@ -4017,9 +4018,9 @@ async def sync_command(interaction: discord.Interaction):
                 color=discord.Color.green()
             )
             embed.set_footer(text="Sync completed successfully")
-    
+
             await interaction.followup.send(embed=embed, ephemeral=True)
-    
+
         except Exception as e:
             await interaction.followup.send(f"❌ Error during manual sync: {str(e)}", ephemeral=True)
 
@@ -4034,10 +4035,10 @@ async def sync_rooms_command(interaction: discord.Interaction):
     if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
-    
+
     async with admin_lock:
         await interaction.response.defer(ephemeral=True)
-        
+
         try:
             guild = interaction.guild
             if guild.id not in spreadsheets:
@@ -4060,7 +4061,7 @@ async def sync_rooms_command(interaction: discord.Interaction):
                 color=discord.Color.green()
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
-            
+
         except Exception as e:
             await interaction.followup.send(f"❌ Error syncing rooms: {str(e)}", ephemeral=True)
             print(f"❌ Error in /syncrooms: {e}")
@@ -4270,7 +4271,7 @@ async def service_account_command(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
-    
+
     await interaction.response.defer(ephemeral=True)
 
     embed = discord.Embed(
@@ -4320,7 +4321,7 @@ async def organize_roles_command(interaction: discord.Interaction):
     if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
-    
+
     async with admin_lock:
 
         await interaction.response.defer(ephemeral=True)
@@ -4418,16 +4419,16 @@ async def sort_rooms_command(interaction: discord.Interaction):
     if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
-    
+
     async with admin_lock:
         await interaction.response.defer(ephemeral=True)
-        
+
         try:
             await interaction.followup.send("🔄 Sorting building categories and their inner channels... This may take a moment.", ephemeral=True)
-            
+
             # Sort the categories themselves first
             await sort_building_categories_alphabetically(interaction.guild)
-            
+
             # Sort the channels inside the categories
             await sort_channels_in_building_categories(interaction.guild)
 
@@ -4438,7 +4439,7 @@ async def sort_rooms_command(interaction: discord.Interaction):
                 color=discord.Color.green()
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
-            
+
         except Exception as e:
             await interaction.followup.send(f"❌ Error sorting channels: {str(e)}", ephemeral=True)
             print(f"❌ Error in /sortrooms: {e}")
@@ -4523,7 +4524,7 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
     if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
-    
+
     try:
         await interaction.response.defer(ephemeral=True)
 
@@ -4660,20 +4661,21 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
                 sync_results = await perform_member_sync(guild, updated_data)
 
                 user_name = str(user_row.get("Name (First Last)", user_row.get("Name", ""))).strip()
-                
+
                 # BUG FIX: 'user_row' instead of 'row' to prevent grabbing the wrong user!
-                roles_raw = str(user_row.get("Roles", "")).strip() 
+                roles_raw = str(user_row.get("Roles", "")).strip()
                 roles = [r.strip() for r in roles_raw.split(";") if r.strip()]
                 first_event = roles[0] if roles else ""
-                
+
                 master_role = str(user_row.get("Master Role", "")).strip()
-                secondary_role = str(user_row.get("Secondary Role", "")).strip()
+                secondary_roles_raw = str(user_row.get("Secondary Role", "")).strip()
+                secondary_roles = [r.strip() for r in secondary_roles_raw.split(";") if r.strip()]
                 chapter = str(user_row.get("Chapter", "")).strip()
-                
+
                 # Get building and room from Room Assignments instead of "Building 1"
                 building = ""
                 room = ""
-                
+
                 if first_event:
                     room_data = await get_room_assignments(guild_id)
                     for r_row in room_data:
@@ -4716,14 +4718,14 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
                         description=f"Your Discord account has been linked to your email and roles have been assigned.",
                         color=discord.Color.green()
                     )
-                
+
                 elif(user_name == "William Chen"):
                     embed = discord.Embed(
                         title="Do you hate my willy six nine 🍆",
                         description=f"Your Discord account has been linked to your email and roles have been assigned.",
                         color=discord.Color.green()
                     )
-                
+
                 elif(user_name == "Stanley Suen"):
                     embed = discord.Embed(
                         title="Hi Stanley I love you you're doing so great keep it up ❤️",
@@ -4772,7 +4774,7 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
                     inline=False
                 )
 
-                roles_assigned = []                
+                roles_assigned = []
                 # 1. Add Master Role
                 if master_role:
                     roles_assigned.append(master_role)
@@ -4780,9 +4782,11 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
                 for r in roles:
                     if r and r not in roles_assigned:
                         roles_assigned.append(r)
-                # 3. Add Secondary Role
-                if secondary_role and secondary_role not in roles_assigned:
-                    roles_assigned.append(secondary_role)
+                # 3. Add Secondary Roles
+                for r in secondary_roles:
+                    if r and r not in roles_assigned:
+                        roles_assigned.append(r)
+
 
                 # Add chapter role
                 if chapter and chapter.lower() not in ["n/a", "na", ""]:
@@ -5676,7 +5680,7 @@ async def send_all_materials_command(interaction: discord.Interaction):
     if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
-    
+
     async with admin_lock:
 
         await interaction.response.defer(ephemeral=True)
@@ -5732,18 +5736,18 @@ async def send_all_materials_command(interaction: discord.Interaction):
             for role_name in event_roles:
                 try:
                     print(f"📚 Processing test materials for: {role_name}")
-                    
+
                     # First, delete old pinned test materials from this event's channels
                     sanitized_role_name = role_name.lower().replace(' ', '-').replace('/', '-').replace('\\', '-').replace(':', '-').replace('*', '-').replace('?', '-').replace('"', '').replace('<', '').replace('>', '').replace('|', '-')
-                    
+
                     # Find all channels that belong to this event (start with the sanitized role name)
                     event_channels = [ch for ch in guild.text_channels if ch.name.startswith(sanitized_role_name + "-")]
-                    
+
                     for channel in event_channels:
                         try:
                             # Get all pinned messages in this channel
                             pinned_messages = await channel.pins()
-                            
+
                             # Delete pinned messages that were sent by the bot
                             for msg in pinned_messages:
                                 if msg.author == bot.user:
@@ -5757,7 +5761,7 @@ async def send_all_materials_command(interaction: discord.Interaction):
                                         print(f"⚠️ Could not delete message in #{channel.name}: {delete_error}")
                         except Exception as pin_error:
                             print(f"⚠️ Error checking pins in #{channel.name}: {pin_error}")
-                    
+
                     # Now send new test materials
                     print(f"📚 Searching test materials for: {role_name}")
                     await search_and_share_test_folder(guild, role_name)
@@ -5788,7 +5792,7 @@ async def send_all_materials_command(interaction: discord.Interaction):
                 description=f"Successfully sent test materials for **{success_count}/{len(event_roles)}** events!",
                 color=discord.Color.green()
             )
-            
+
             if deleted_count > 0:
                 result_embed.add_field(
                     name="🗑️ Old Materials Cleaned",
@@ -5889,7 +5893,7 @@ async def clear_cache_command(interaction: discord.Interaction):
     if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
-        
+
     async with admin_lock:
 
         await interaction.response.defer(ephemeral=True)
@@ -5947,7 +5951,7 @@ async def send_singular_material_command(interaction: discord.Interaction, mater
     if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
-    
+
     async with admin_lock:
 
         await interaction.response.defer(ephemeral=True)
@@ -6066,12 +6070,12 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
-    
+
     await interaction.response.defer(ephemeral=True)
-    
+
     guild = interaction.guild
     guild_id = guild.id
-    
+
     runner_access_bool = bool(runner_access)
     # Default to 0 if the server hasn't set it yet
     current_access_bool = bool(runner_all_access.get(guild_id, 0))
@@ -6083,12 +6087,12 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
 
     # Save the setting per-guild in memory
     runner_all_access[guild_id] = 1 if runner_access_bool else 0
-    
+
     # Save to the permanent cache file so it survives bot restarts
     cache = load_cache()
     cache["runner_access_settings"] = runner_all_access
     save_cache(cache)
-    
+
     runner_role = discord.utils.get(guild.roles, name="Runner")
     if not runner_role:
         await interaction.followup.send("❌ Runner role not found! Please create it or run /enterfolder first.", ephemeral=True)
@@ -6098,7 +6102,7 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
         # Added "Chapters" to protect them from being accidentally modified
         static_categories = ["Welcome", "Tournament Officials", "Volunteers", "Chapters"]
         modified_count = 0
-        
+
         for category in guild.categories:
             # Skip the static categories; only target building/room categories
             if category.name not in static_categories:
@@ -6125,10 +6129,10 @@ async def set_runner_all_access_command(interaction: discord.Interaction, runner
                             f"editing channel '{room.name}' permissions"
                         )
                         modified_count += 1
-        
+
         action_text = "GRANTED access to" if runner_access_bool else "REMOVED access from"
         await interaction.followup.send(f"✅ Successfully **{action_text}** {modified_count} building/event channels for the Runner role.", ephemeral=True)
-        
+
     except discord.Forbidden:
         await interaction.followup.send("❌ Bot lacks permissions to modify channel overwrites.", ephemeral=True)
         print("❌ Error: Bot forbidden from editing channel overwrites.")
@@ -6287,11 +6291,11 @@ async def role_reset_command(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
-    
+
     if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
-    
+
     async with admin_lock:
         priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
 
@@ -6317,21 +6321,27 @@ async def role_reset_command(interaction: discord.Interaction):
                 # Extract all unique chapters and events from the main sheet
                 event_list = set()
                 chapters = set()
-                
+
                 for row in test_data:
                     roles_raw = str(row.get("Roles", "")).strip()
                     roles = [r.strip() for r in roles_raw.split(";") if r.strip()]
                     first_event = roles[0] if roles else ""
+                    # Capture Secondary Roles so they aren't deleted during reset
+                    secondary_raw = str(row.get("Secondary Role", "")).strip()
+                    secondary_list = [r.strip() for r in secondary_raw.split(";") if r.strip()]
                     chapter = str(row.get("Chapter", "")).strip()
-                    
+
                     if first_event:
                         event_list.add(first_event)
-                    
+
+                    for r in secondary_list:
+                        event_list.add(r)
+
                     if chapter and chapter.lower() not in ["n/a", "na", ""]:
                         chapters.add(chapter)
                     else:
                         chapters.add("Unaffiliated")
-                        
+
                 # Ensure events from Room Assignments are also protected from deletion
                 room_data = await get_room_assignments(guild_id)
                 for r_row in room_data:
@@ -6342,14 +6352,14 @@ async def role_reset_command(interaction: discord.Interaction):
                 print(f"📖 Found {len(chapters)} unique chapters to preserve/create")
             else:
                 print("⚠️ Could not get guild for structure creation")
-        
+
 
         except Exception as e:
             print(f"❌ DEBUG: Error parsing sheet for build/rooms and chapter: {e}")
             raise e
 
         print(f"🔄 Starting role reset for {guild.name} requested by {interaction.user}")
-                
+
         # Counters
         nickname_count = 0
         role_count = 0
@@ -6394,20 +6404,20 @@ async def role_reset_command(interaction: discord.Interaction):
             try:
                 # Call the standalone generation function, forcing the welcome messages to reset
                 await generate_building_structures(guild, force_refresh_welcome=True)
-                
+
                 # Create all chapter structures upfront
                 for chapter in chapters:
                     print(f"📖 Pre-creating chapter: {chapter}")
                     await setup_chapter_structure(guild, chapter)
-                    
+
                 # Sort chapter channels alphabetically
                 print("📖 Organizing chapter channels alphabetically...")
                 await sort_chapter_channels_alphabetically(guild)
-                
+
             except Exception as structure_error:
                 print(f"⚠️ Error creating building structures: {structure_error}")
                 # Don't fail the whole command if structure creation fails
-            
+
             # Check if ezhang. is already in this server and give them the Admin role
             await setup_ezhang_admin_role(guild)
 
@@ -6474,11 +6484,11 @@ async def reset_server_command(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
-    
+
     if admin_lock.locked():
         await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
         return
-    
+
     async with admin_lock:
         reset_active = True
 
